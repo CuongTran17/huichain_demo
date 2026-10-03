@@ -1,4 +1,5 @@
 from datetime import date
+from datetime import timedelta
 from io import BytesIO
 import json
 import random
@@ -7,6 +8,7 @@ from zipfile import ZipFile
 import pytest
 
 from rosca_sim.prices import (
+    PricePoint,
     fetch_coingecko_prices,
     fetch_binance_spot_prices,
     load_price_csv,
@@ -96,6 +98,24 @@ def test_gradual_and_crash_paths_have_expected_shape():
     assert gradual.prices == pytest.approx((1.0, 0.9, 0.8, 0.7, 0.6))
     assert max(crash.prices) == pytest.approx(1.3)
     assert crash.prices[-1] == pytest.approx(0.6)
+
+
+def test_grace_tail_requires_complete_daily_history():
+    start = date(2020, 1, 1)
+    points = tuple(PricePoint(start + timedelta(days=i), 100.0) for i in range(165))
+    path = sample_historical_path(points, 6, 30, random.Random(1), extra_days=14)
+    assert len(path.prices) == 6
+    assert len(path.daily_prices) == 165
+    with pytest.raises(ValueError, match="no complete historical window"):
+        sample_historical_path(points[:-1], 6, 30, random.Random(1), extra_days=14)
+
+
+def test_stress_path_grace_tail_and_negative_rejection():
+    path = make_stress_path("constant", 6, 30, extra_days=14)
+    assert len(path.prices) == 6
+    assert len(path.daily_prices) == 165
+    with pytest.raises(ValueError, match="extra_days"):
+        make_stress_path("constant", 6, 30, extra_days=-1)
 
 
 class FakeResponse:

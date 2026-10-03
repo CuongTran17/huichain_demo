@@ -2,7 +2,9 @@ import math
 
 import pytest
 
-from rosca_sim.auction import AuctionAgentSeed, AuctionBid, AuctionRoscaModel, AuctionScenario
+from dataclasses import replace
+
+from rosca_sim.auction import AuctionAgentSeed, AuctionBid, AuctionEvent, AuctionPriceOverride, AuctionRoscaModel, AuctionScenario
 from rosca_sim.model import BehaviorConfig, CollateralConfig, RoscaConfig
 from rosca_sim.prices import PricePath
 
@@ -103,3 +105,127 @@ def test_invalid_bid_rate_is_rejected(rate):
 def test_duplicate_bid_is_rejected():
     with pytest.raises(ValueError, match="duplicate bid"):
         AuctionRoscaModel(scenario([(0, 0, 0.1), (0, 0, 0.2)]), "fixed", constant_prices())
+
+
+@pytest.mark.parametrize("sale_price,used,loss", [(0.8, 100.0, 0.0), (0.6, 120.0, 80.0)])
+def test_first_recipient_default_consumes_interest_before_principal(sale_price, used, loss):
+    original = scenario([(0, 0, 0.2)])
+    shocked = PricePath((1.0,) * 6, "shock", None, (1.0, sale_price) + (1.0,) * 156)
+    case = replace(original, forced_defaults=(AuctionEvent(0, 1),), grace_days=0)
+    result = AuctionRoscaModel(case, "fixed", shocked).run()
+    assert result.default_count == 1
+    assert result.freeze_day == 1
+    assert result.interest_used == pytest.approx(used)
+    assert result.principal_loss == pytest.approx(loss)
+    if loss:
+        assert [r.principal_loss for r in result.agent_results[1:]] == pytest.approx([16.0] * 5)
+
+
+def test_normal_completion_distributes_interest_by_wait():
+    bids = [(period, period, 0.2 if period == 0 else 0.0) for period in range(6)]
+    result = AuctionRoscaModel(scenario(bids), "fixed", constant_prices()).run()
+    assert result.stop_reason == "completed"
+    assert result.interest_retained == pytest.approx(120.0)
+    assert result.interest_distributed == pytest.approx(120.0)
+    interests = [r.interest_received for r in result.agent_results]
+    assert interests[0] == 0.0
+    assert interests == sorted(interests)
+
+
+def test_due_date_default_freezes_before_new_contributions():
+    original = scenario([(0, 0, 0.2), (1, 1, 0.1)])
+    case = replace(original, forced_defaults=(AuctionEvent(0, 30),))
+    result = AuctionRoscaModel(case, "fixed", constant_prices()).run()
+    assert result.payout_order == (0,)
+    assert all(r.total_contributed == 100 for r in result.agent_results)
+
+
+def test_reversed_same_day_defaults_have_identical_result():
+    original = scenario([(0, 0, 0.2), (1, 1, 0.1)])
+    events = (AuctionEvent(0, 31), AuctionEvent(1, 31))
+    case = replace(original, forced_defaults=events, grace_days=0)
+    reverse = replace(case, forced_defaults=tuple(reversed(events)))
+    a = AuctionRoscaModel(case, "fixed", constant_prices()).run()
+    b = AuctionRoscaModel(reverse, "fixed", constant_prices()).run()
+    assert a == b
+    assert a.default_count == 2
+
+
+def test_missed_pre_payout_contribution_freezes_without_penalty():
+    original = scenario([(0, 0, 0.2)])
+    case = replace(original, missed_contributions=(AuctionEvent(1, 30),))
+    result = AuctionRoscaModel(case, "fixed", constant_prices()).run()
+    assert result.default_count == 1
+    assert result.agent_results[1].principal_repaid == pytest.approx(100)
+
+
+def test_eth_first_sells_only_debt_and_returns_surplus_eth():
+    original = scenario([(0, 0, 0.2), (1, 1, 0.0)])
+    agents = list(original.agents)
+    agents[1] = AuctionAgentSeed(1, 0.5, 1000, "eth_first", 0)
+    case = replace(original, agents=tuple(agents), forced_defaults=(AuctionEvent(0, 31),), grace_days=0)
+    result = AuctionRoscaModel(case, "fixed", constant_prices()).run()
+    recipient = result.agent_results[1]
+    assert recipient.eth_sold == pytest.approx(400)
+    assert recipient.eth_returned == pytest.approx(0)
+    assert recipient.usdc_settlement_paid == 0
+    assert recipient.obligation_uncollected == 0
+
+
+def test_usdc_first_full_payment_returns_all_eth():
+    original = scenario([(0, 0, 0.2), (1, 1, 0.0)])
+    case = replace(original, forced_defaults=(AuctionEvent(0, 31),), grace_days=7)
+    result = AuctionRoscaModel(case, "fixed", constant_prices()).run()
+    recipient = result.agent_results[1]
+    assert recipient.usdc_settlement_paid == pytest.approx(400)
+    assert recipient.eth_sold == 0
+    assert recipient.eth_returned == pytest.approx(400)
+    assert recipient.payment_day == 38
+
+
+def test_partial_usdc_and_eth_never_overcollect():
+    original = scenario([(0, 0, 0.2), (1, 1, 0.0)])
+    agents = list(original.agents)
+    agents[1] = AuctionAgentSeed(1, 0.5, 1000, "usdc_first", 150)
+    case = replace(original, agents=tuple(agents), forced_defaults=(AuctionEvent(0, 31),), grace_days=7)
+    recipient = AuctionRoscaModel(case, "fixed", constant_prices()).run().agent_results[1]
+    assert recipient.usdc_settlement_paid == pytest.approx(150)
+    assert recipient.eth_sold == pytest.approx(250)
+    assert recipient.eth_returned == pytest.approx(150)
+    assert recipient.obligation_uncollected == 0
+
+
+def test_event_conflicts_and_invalid_capacity_rejected():
+    original = scenario([(0, 0, 0.2)])
+    with pytest.raises(ValueError, match="duplicate or conflicting"):
+        AuctionRoscaModel(replace(original, forced_defaults=(AuctionEvent(0, 30),),
+                                  missed_contributions=(AuctionEvent(0, 30),)), "fixed", constant_prices())
+    agents = list(original.agents)
+    agents[0] = replace(agents[0], usdc_capacity=-1)
+    with pytest.raises(ValueError, match="invalid auction agent"):
+        AuctionRoscaModel(replace(original, agents=tuple(agents)), "fixed", constant_prices())
+    with pytest.raises(ValueError, match="realized payout"):
+        AuctionRoscaModel(replace(original, forced_defaults=(AuctionEvent(1, 1),)), "fixed", constant_prices()).run()
+
+
+def test_intraday_wick_changes_executable_sale_not_due_price():
+    original = scenario([(0, 0, 0.2)])
+    case = replace(original, forced_defaults=(AuctionEvent(0, 1),), grace_days=0)
+    baseline = AuctionRoscaModel(case, "fixed", constant_prices()).run()
+    shocked = AuctionRoscaModel(replace(case, execution_price_overrides=(AuctionPriceOverride(1, 0.6),)),
+                                "fixed", constant_prices()).run()
+    assert baseline.eth_sale_proceeds == pytest.approx(500)
+    assert shocked.eth_sale_proceeds == pytest.approx(300)
+    assert shocked.agent_results[0].eth_locked == pytest.approx(500)
+
+
+def test_usdc_first_nopayer_sells_at_deadline_price():
+    original = scenario([(0, 0, 0.2), (1, 1, 0)])
+    agents = list(original.agents)
+    agents[1] = replace(agents[1], usdc_capacity=0)
+    daily = list((1.0,) * 158)
+    daily[38] = 0.5
+    case = replace(original, agents=tuple(agents), forced_defaults=(AuctionEvent(0, 31),), grace_days=7)
+    result = AuctionRoscaModel(case, "fixed", PricePath((1.0,) * 6, "shock", None, tuple(daily))).run()
+    assert result.agent_results[1].eth_sold == pytest.approx(400)
+    assert result.agent_results[1].obligation_uncollected == pytest.approx(200)

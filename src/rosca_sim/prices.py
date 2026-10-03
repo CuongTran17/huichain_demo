@@ -55,11 +55,14 @@ def sample_historical_path(
     rng: random.Random,
     normalize: bool = True,
     window_start: date | None = None,
+    extra_days: int = 0,
 ) -> PricePath:
     if periods < 1 or period_days < 1:
         raise ValueError("periods and period_days must be positive")
+    if type(extra_days) is not int or extra_days < 0:
+        raise ValueError("extra_days must be a nonnegative integer")
     by_day = {point.day: point.close for point in points}
-    days_needed = (periods - 1) * period_days + 1
+    days_needed = (periods - 1) * period_days + 1 + extra_days
     starts: list[date] = []
     next_day: date | None = None
     run_length = 0
@@ -78,7 +81,7 @@ def sample_historical_path(
     if normalize:
         initial = daily[0]
         daily = tuple(value / initial for value in daily)
-    values = daily[::period_days]
+    values = daily[:(periods - 1) * period_days + 1:period_days]
     return PricePath(values, "historical", start.isoformat(), daily)
 
 
@@ -88,9 +91,11 @@ def _linear(start: float, end: float, count: int) -> tuple[float, ...]:
     return tuple(start + (end - start) * i / (count - 1) for i in range(count))
 
 
-def make_stress_path(scenario: str, periods: int, period_days: int = 1) -> PricePath:
+def make_stress_path(scenario: str, periods: int, period_days: int = 1, extra_days: int = 0) -> PricePath:
     if periods < 1 or period_days < 1:
         raise ValueError("periods and period_days must be positive")
+    if type(extra_days) is not int or extra_days < 0:
+        raise ValueError("extra_days must be a nonnegative integer")
     levels = {"constant": 1.0, "drop_20": 0.8, "drop_40": 0.6, "drop_60": 0.4}
     if scenario in levels:
         end = levels[scenario]
@@ -106,7 +111,7 @@ def make_stress_path(scenario: str, periods: int, period_days: int = 1) -> Price
         raise ValueError(f"unknown stress scenario: {scenario}")
     daily = tuple(
         prices[day // period_days]
-        for day in range((periods - 1) * period_days + 1)
+        for day in range((periods - 1) * period_days + 1 + extra_days)
     )
     return PricePath(prices, scenario, None, daily)
 
