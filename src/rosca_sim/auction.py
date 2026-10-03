@@ -74,6 +74,8 @@ class AuctionAgentResult:
     eth_released: float
     eth_sold: float
     eth_returned: float
+    eth_sale_day: int | None
+    eth_sale_price: float | None
     usdc_settlement_paid: float
     settlement_mode: str
     payment_day: int | None
@@ -125,6 +127,8 @@ class AuctionAgent(Agent):
         self.eth_released = 0.0
         self.eth_sold = 0.0
         self.eth_returned = 0.0
+        self.eth_sale_day: int | None = None
+        self.eth_sale_price: float | None = None
         self.usdc_settlement_paid = 0.0
         self.payment_day: int | None = None
         self.obligation_uncollected = 0.0
@@ -159,18 +163,34 @@ class AuctionRoscaModel(Model):
     ):
         super().__init__(rng=seed)
         rosca = scenario.rosca
-        if rosca.members < 6 or rosca.members != rosca.periods:
+        if type(rosca.members) is not int or type(rosca.periods) is not int or rosca.members < 6 or rosca.members != rosca.periods:
             raise ValueError("auction mode requires members == periods >= 6")
-        if rosca.contribution <= 0 or rosca.period_days < 1 or rosca.reserve_initial != 0:
+        if (type(rosca.contribution) not in (int, float) or not isfinite(rosca.contribution)
+            or rosca.contribution <= 0 or type(rosca.period_days) is not int
+            or rosca.period_days < 1 or rosca.reserve_initial != 0):
             raise ValueError("invalid auction ROSCA configuration")
         if policy not in ("fixed", "reputation_adjusted"):
             raise ValueError("unknown auction collateral policy")
         if type(scenario.grace_days) is not int or scenario.grace_days < 0:
             raise ValueError("grace_days must be a nonnegative integer")
-        if not 0 <= scenario.collateral.liquidation_slippage < 1:
+        collateral_values = (scenario.collateral.fixed_ratio, scenario.collateral.alpha_min,
+                             scenario.collateral.alpha_max, scenario.collateral.liquidation_slippage)
+        if any(type(value) not in (int, float) or not isfinite(value) for value in collateral_values):
+            raise ValueError("invalid auction collateral ratios")
+        if (min(collateral_values[:3]) < 0 or scenario.collateral.alpha_min > scenario.collateral.alpha_max
+            or not 0 <= scenario.collateral.liquidation_slippage < 1):
             raise ValueError("invalid liquidation slippage")
+        if scenario.collateral.require_top_up:
+            raise ValueError("auction mode does not support automatic top-up")
+        if scenario.collateral.stress_drop is not None and (
+            type(scenario.collateral.stress_drop) not in (int, float)
+            or not isfinite(scenario.collateral.stress_drop)
+            or not 0 <= scenario.collateral.stress_drop < 1
+        ):
+            raise ValueError("invalid auction stress_drop")
         if len(price_path.prices) != rosca.periods or any(
-            not isfinite(price) or price <= 0 for price in price_path.prices
+            type(price) not in (int, float) or not isfinite(price) or price <= 0
+            for price in price_path.prices
         ):
             raise ValueError("invalid due-date ETH prices")
         required_days = (rosca.periods - 1) * rosca.period_days + 1 + scenario.grace_days
@@ -184,9 +204,13 @@ class AuctionRoscaModel(Model):
             raise ValueError("auction agents need unique contiguous member IDs")
         for agent in scenario.agents:
             if (
-                not 0 <= agent.reputation <= 1
+                type(agent.reputation) not in (int, float)
+                or not isfinite(agent.reputation)
+                or not 0 <= agent.reputation <= 1
+                or type(agent.available_eth) not in (int, float)
                 or not isfinite(agent.available_eth)
                 or agent.available_eth < 0
+                or type(agent.usdc_capacity) not in (int, float)
                 or not isfinite(agent.usdc_capacity)
                 or agent.usdc_capacity < 0
                 or agent.settlement_mode not in ("eth_first", "usdc_first")
@@ -334,9 +358,13 @@ class AuctionRoscaModel(Model):
         return price
 
     def _sell(self, agent: AuctionAgent, obligation: float, day: int) -> float:
+        price = self._execution_price(day)
         sale = settle_default(obligation, agent.locked_eth,
-                              self._execution_price(day),
+                              price,
                               self.auction.collateral.liquidation_slippage)
+        if sale.liquidated_eth > 0:
+            agent.eth_sale_day = day
+            agent.eth_sale_price = price * (1 - self.auction.collateral.liquidation_slippage)
         agent.eth_sold += sale.liquidated_eth
         agent.eth_returned += sale.returned_eth
         agent.locked_eth = 0.0
@@ -413,6 +441,7 @@ class AuctionRoscaModel(Model):
                 principal_loss=max(0.0, claims.get(a.member_id, 0.0) - a.principal_repaid),
                 interest_received=a.interest_received, eth_locked=a.initial_locked_eth,
                 eth_released=a.eth_released, eth_sold=a.eth_sold, eth_returned=a.eth_returned,
+                eth_sale_day=a.eth_sale_day, eth_sale_price=a.eth_sale_price,
                 usdc_settlement_paid=a.usdc_settlement_paid, settlement_mode=a.settlement_mode,
                 payment_day=a.payment_day, obligation_uncollected=a.obligation_uncollected,
             ) for a in (self.agents_by_id[i] for i in sorted(self.agents_by_id))

@@ -229,3 +229,19 @@ def test_usdc_first_nopayer_sells_at_deadline_price():
     result = AuctionRoscaModel(case, "fixed", PricePath((1.0,) * 6, "shock", None, tuple(daily))).run()
     assert result.agent_results[1].eth_sold == pytest.approx(400)
     assert result.agent_results[1].obligation_uncollected == pytest.approx(200)
+    assert result.agent_results[1].eth_sale_day == 38
+    assert result.agent_results[1].eth_sale_price == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("invalid", [True, math.nan, math.inf, 0.0, -1.0])
+def test_invalid_due_price_is_rejected_before_any_payout(invalid):
+    prices = PricePath((invalid,) + (1.0,) * 5, "invalid", None, (1.0,) * 158)
+    with pytest.raises(ValueError, match="due-date ETH prices"):
+        AuctionRoscaModel(scenario([(0, 0, 0.2)]), "fixed", prices)
+
+
+def test_invalid_sale_override_is_rejected_before_any_eth_sale():
+    original = scenario([(0, 0, 0.2)])
+    case = replace(original, execution_price_overrides=(AuctionPriceOverride(1, math.nan),))
+    with pytest.raises(ValueError, match="execution price override"):
+        AuctionRoscaModel(case, "fixed", constant_prices())

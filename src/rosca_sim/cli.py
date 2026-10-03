@@ -19,7 +19,7 @@ from rosca_sim.auction import (
     AuctionAgentSeed, AuctionBid, AuctionEvent, AuctionPriceOverride, AuctionScenario,
     AuctionRoscaModel,
 )
-from rosca_sim.auction_experiment import run_auction_experiment
+from rosca_sim.auction_experiment import run_auction_experiment, run_auction_grace_sweep
 
 from rosca_sim.experiment import (
     ExperimentConfig,
@@ -127,6 +127,20 @@ def _auction_price_source(config: LoadedAuctionConfig, extra_days: int | None = 
                                       rng, bool(config.prices["normalize"]),
                                       config.prices["window_start"], tail)
     return sample
+
+
+def _augment_auction_metadata(config: LoadedAuctionConfig, output: Path) -> None:
+    metadata_path = output / "auction_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["config_sha256"] = hashlib.sha256(config.path.read_bytes()).hexdigest()
+    metadata["price_source"] = config.prices["source"]
+    if config.prices["source"] == "historical":
+        metadata["price_file_sha256"] = hashlib.sha256(Path(config.prices["file"]).read_bytes()).hexdigest()
+        metadata["price_start_date"] = config.prices["start_date"].isoformat()
+        metadata["price_end_date"] = config.prices["end_date"].isoformat()
+    else:
+        metadata["price_scenario"] = config.prices["scenario"]
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _as_date(value: object, field: str) -> date:
@@ -304,6 +318,10 @@ def build_parser() -> argparse.ArgumentParser:
     auction = commands.add_parser("auction-run", help="run paired auction ROSCA scenarios")
     auction.add_argument("--config", type=Path, required=True)
     auction.add_argument("--output", type=Path, required=True)
+    auction_sweep = commands.add_parser("auction-grace-sweep", help="compare auction settlement deadlines")
+    auction_sweep.add_argument("--config", type=Path, required=True)
+    auction_sweep.add_argument("--output", type=Path, required=True)
+    auction_sweep.add_argument("--days", type=int, nargs="+", required=True)
     run = commands.add_parser("run", help="run a paired ROSCA experiment")
     run.add_argument("--config", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
@@ -336,11 +354,18 @@ def _dotenv_value(name: str, path: Path = Path(".env")) -> str | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "auction-run":
+    if args.command in ("auction-run", "auction-grace-sweep"):
         auction_config = load_auction_config(args.config)
         output = Path(args.output)
-        run_auction_experiment(auction_config.scenario, _auction_price_source(auction_config),
-                               auction_config.runs, auction_config.seed, output)
+        if args.command == "auction-run":
+            run_auction_experiment(auction_config.scenario, _auction_price_source(auction_config),
+                                   auction_config.runs, auction_config.seed, output)
+            _augment_auction_metadata(auction_config, output)
+        else:
+            run_auction_grace_sweep(auction_config.scenario,
+                                    _auction_price_source(auction_config, max(args.days)),
+                                    auction_config.runs, auction_config.seed,
+                                    tuple(args.days), output)
         shutil.copyfile(auction_config.path, output / "config.toml")
         print(output)
         print(f"runs: {auction_config.runs}")

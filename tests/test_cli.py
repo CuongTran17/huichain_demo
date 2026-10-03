@@ -85,6 +85,19 @@ def test_auction_config_rejects_invalid_inputs(tmp_path, old, new, match):
         cli.load_auction_config(config)
 
 
+def test_auction_grace_sweep_command(tmp_path):
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "configs" / "auction-six-member.toml"
+    output = tmp_path / "sweep"
+    assert main(["auction-grace-sweep", "--config", str(source), "--output", str(output),
+                 "--days", "0", "1", "3", "7", "14"]) == 0
+    with (output / "auction_grace_frontier.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 10
+    assert {row["grace_days"] for row in rows} == {"0", "1", "3", "7", "14"}
+
+
 def test_config_rejects_member_period_mismatch(tmp_path):
     path = write_config(tmp_path, valid_toml().replace("periods = 2", "periods = 3"))
     with pytest.raises(ValueError, match="members must equal periods"):

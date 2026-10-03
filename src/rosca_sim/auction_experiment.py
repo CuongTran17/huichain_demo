@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
+from math import ceil
 from pathlib import Path
 import random
+from statistics import mean
 from typing import Callable
 
 from rosca_sim import __version__
@@ -92,3 +94,53 @@ def run_auction_experiment(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return AuctionExperimentOutput(tuple(run_rows), tuple(agent_rows), tuple(pair_rows))
+
+
+def run_auction_grace_sweep(
+    scenario: AuctionScenario,
+    price_source: PricePath | Callable[[random.Random], PricePath],
+    runs: int,
+    seed: int,
+    grace_days: tuple[int, ...],
+    output_dir: Path,
+) -> Path:
+    if type(runs) is not int or runs < 1:
+        raise ValueError("runs must be positive")
+    if (not grace_days or len(set(grace_days)) != len(grace_days)
+        or any(type(day) is not int or day < 0 for day in grace_days)):
+        raise ValueError("grace days must be unique nonnegative integers")
+    if any(agent.payment_day_offset is not None and agent.payment_day_offset > min(grace_days)
+           for agent in scenario.agents):
+        raise ValueError("payment_day_offset exceeds a requested grace period")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    observed: dict[tuple[int, str], list[AuctionRunResult]] = {
+        (day, policy): [] for day in grace_days for policy in ("fixed", "reputation_adjusted")
+    }
+    master = random.Random(seed)
+    for run_id in range(runs):
+        child_seed = master.getrandbits(63)
+        path = price_source(random.Random(child_seed ^ 0x5A5A5A5A)) if callable(price_source) else price_source
+        for day in grace_days:
+            fixed, adjusted = run_auction_pair(replace(scenario, grace_days=day), path, run_id, child_seed)
+            observed[(day, "fixed")].append(fixed)
+            observed[(day, "reputation_adjusted")].append(adjusted)
+    rows: list[dict[str, object]] = []
+    for day in grace_days:
+        for policy in ("fixed", "reputation_adjusted"):
+            results = observed[(day, policy)]
+            losses = sorted(result.principal_loss for result in results)
+            rows.append({
+                "grace_days": day,
+                "policy": policy,
+                "runs": runs,
+                "mean_principal_loss": mean(losses),
+                "p95_principal_loss": losses[ceil(0.95 * len(losses)) - 1],
+                "worst_member_principal_loss": max(result.worst_member_loss for result in results),
+                "mean_interest_used": mean(result.interest_used for result in results),
+                "mean_settlement_delay_days": mean(result.settlement_day - result.freeze_day for result in results),
+                "mean_forced_eth_sales": mean(sum(agent.eth_sold > 0 for agent in result.agent_results)
+                                              for result in results),
+            })
+    output = output_dir / "auction_grace_frontier.csv"
+    _write_csv(output, rows)
+    return output
