@@ -1,0 +1,38 @@
+[rosca]
+members = 6
+periods = 6
+contribution = 100.0
+period_days = 30
+reserve_initial = 0.0
+
+[collateral]
+fixed_ratio = 0.50
+alpha_min = 0.20
+alpha_max = 0.80
+require_top_up = false
+stress_drop = 0.40
+liquidation_slippage = 0.10
+
+[reputation]
+distribution = "beta"
+alpha = 2.0
+beta = 2.0
+new_member_share = 0.20
+
+[behavior]
+decision_mode = "every_due_date"
+decision_rule = "deterministic"
+reputation_loss = 10000.0
+future_access_loss = 10000.0
+
+[prices]
+source = "stress"
+scenario = "drop_40"
+
+[experiment]
+runs = 1
+seed = 42
+risk_tolerance = 0.0
+
+[events]
+forced_defaults = [{position = 0, day = 30}]
