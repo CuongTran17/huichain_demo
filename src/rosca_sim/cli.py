@@ -15,6 +15,12 @@ from statistics import mean
 import tomllib
 from typing import Sequence
 
+from rosca_sim.auction import (
+    AuctionAgentSeed, AuctionBid, AuctionEvent, AuctionPriceOverride, AuctionScenario,
+    AuctionRoscaModel,
+)
+from rosca_sim.auction_experiment import run_auction_experiment
+
 from rosca_sim.experiment import (
     ExperimentConfig,
     ReputationConfig,
@@ -41,6 +47,86 @@ class LoadedConfig:
     prices: dict[str, object]
     experiment: ExperimentConfig
     forced_defaults: tuple[ForcedDefault, ...]
+
+
+@dataclass(frozen=True)
+class LoadedAuctionConfig:
+    path: Path
+    scenario: AuctionScenario
+    prices: dict[str, object]
+    runs: int
+    seed: int
+
+
+def load_auction_config(path: Path) -> LoadedAuctionConfig:
+    path = Path(path)
+    with path.open("rb") as handle:
+        raw = tomllib.load(handle)
+    try:
+        rosca = RoscaConfig(**raw["rosca"])
+        collateral = CollateralConfig(**raw["collateral"])
+        behavior = BehaviorConfig(**raw["behavior"])
+        agents = tuple(AuctionAgentSeed(**item) for item in raw["agents"])
+        bids = tuple(AuctionBid(**item) for item in raw["bids"])
+        events = raw.get("events", {})
+        scenario = AuctionScenario(
+            rosca, collateral, behavior, agents, bids,
+            tuple(AuctionEvent(**item) for item in events.get("forced_defaults", [])),
+            tuple(AuctionEvent(**item) for item in events.get("missed_contributions", [])),
+            tuple(AuctionPriceOverride(**item) for item in events.get("execution_price_overrides", [])),
+            raw["auction"]["grace_days"],
+        )
+        prices = dict(raw["prices"])
+        runs = raw["experiment"]["runs"]
+        seed = raw["experiment"]["seed"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"invalid or incomplete auction configuration: {error}") from error
+    if type(runs) is not int or runs < 1 or type(seed) is not int:
+        raise ValueError("invalid auction experiment runs or seed")
+    if type(scenario.grace_days) is not int or scenario.grace_days < 0:
+        raise ValueError("grace_days must be a nonnegative integer")
+    if rosca.reserve_initial != 0:
+        raise ValueError("auction version requires reserve_initial = 0")
+    if prices.get("source") == "historical":
+        for field in ("file", "start_date", "end_date", "normalize"):
+            if field not in prices:
+                raise ValueError(f"historical prices require {field}")
+        price_file = _resolve_price_file(path, prices["file"])
+        if not price_file.is_file():
+            raise FileNotFoundError(f"historical price file not found: {price_file}")
+        prices.update(file=price_file, start_date=_as_date(prices["start_date"], "prices.start_date"),
+                      end_date=_as_date(prices["end_date"], "prices.end_date"),
+                      window_start=_as_date(prices["window_start"], "prices.window_start")
+                      if "window_start" in prices else None)
+        if prices["start_date"] > prices["end_date"]:
+            raise ValueError("prices.start_date must not exceed prices.end_date")
+        points = load_price_csv(price_file, prices["start_date"], prices["end_date"])
+        sample_historical_path(points, rosca.periods, rosca.period_days, random.Random(seed),
+                               bool(prices["normalize"]), prices["window_start"], scenario.grace_days)
+    elif prices.get("source") == "stress":
+        make_stress_path(str(prices["scenario"]), rosca.periods, rosca.period_days, scenario.grace_days)
+    else:
+        raise ValueError("prices.source must be 'historical' or 'stress'")
+    # Model construction validates bids, events, collateral capacity, and daily price shape.
+    validation_path = _auction_price_source(LoadedAuctionConfig(path, scenario, prices, runs, seed))
+    sample = validation_path(random.Random(seed)) if callable(validation_path) else validation_path
+    AuctionRoscaModel(scenario, "fixed", sample)
+    AuctionRoscaModel(scenario, "reputation_adjusted", sample)
+    return LoadedAuctionConfig(path, scenario, prices, runs, seed)
+
+
+def _auction_price_source(config: LoadedAuctionConfig, extra_days: int | None = None):
+    scenario = config.scenario
+    tail = scenario.grace_days if extra_days is None else extra_days
+    if config.prices["source"] == "stress":
+        return make_stress_path(str(config.prices["scenario"]), scenario.rosca.periods,
+                                scenario.rosca.period_days, tail)
+    points = load_price_csv(Path(config.prices["file"]), config.prices["start_date"], config.prices["end_date"])
+    def sample(rng: random.Random) -> PricePath:
+        return sample_historical_path(points, scenario.rosca.periods, scenario.rosca.period_days,
+                                      rng, bool(config.prices["normalize"]),
+                                      config.prices["window_start"], tail)
+    return sample
 
 
 def _as_date(value: object, field: str) -> date:
@@ -215,6 +301,9 @@ def _augment_metadata(config: LoadedConfig, output: Path) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rosca-sim")
     commands = parser.add_subparsers(dest="command", required=True)
+    auction = commands.add_parser("auction-run", help="run paired auction ROSCA scenarios")
+    auction.add_argument("--config", type=Path, required=True)
+    auction.add_argument("--output", type=Path, required=True)
     run = commands.add_parser("run", help="run a paired ROSCA experiment")
     run.add_argument("--config", type=Path, required=True)
     run.add_argument("--output", type=Path, required=True)
@@ -247,6 +336,15 @@ def _dotenv_value(name: str, path: Path = Path(".env")) -> str | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "auction-run":
+        auction_config = load_auction_config(args.config)
+        output = Path(args.output)
+        run_auction_experiment(auction_config.scenario, _auction_price_source(auction_config),
+                               auction_config.runs, auction_config.seed, output)
+        shutil.copyfile(auction_config.path, output / "config.toml")
+        print(output)
+        print(f"runs: {auction_config.runs}")
+        return 0
     if args.command == "fetch-binance-prices":
         fetch_binance_spot_prices(args.start, args.end, args.output)
         print(args.output)

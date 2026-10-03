@@ -52,6 +52,39 @@ def write_config(tmp_path, content: str):
     return path
 
 
+def test_auction_pilot_command_writes_separate_outputs(tmp_path):
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "configs" / "auction-six-member.toml"
+    output = tmp_path / "auction"
+    assert main(["auction-run", "--config", str(source), "--output", str(output)]) == 0
+    assert (output / "auction_run_results.csv").is_file()
+    assert (output / "auction_agent_results.csv").is_file()
+    assert (output / "auction_pair_results.csv").is_file()
+    assert (output / "auction_metadata.json").is_file()
+    assert (output / "config.toml").read_bytes() == source.read_bytes()
+    with (output / "auction_agent_results.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    first = next(row for row in rows if row["policy"] == "fixed" and row["member_id"] == "0")
+    assert float(first["net_payout"]) == pytest.approx(480)
+    assert float(first["winning_bid"]) == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("old,new,match", [
+    ("reserve_initial = 0.0", "reserve_initial = 1.0", "reserve_initial"),
+    ("grace_days = 7", "grace_days = -1", "grace_days"),
+    ("usdc_capacity = 500.0", "usdc_capacity = -1.0", "invalid auction agent"),
+    ("member_id = 5", "member_id = 9", "member IDs"),
+])
+def test_auction_config_rejects_invalid_inputs(tmp_path, old, new, match):
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "configs" / "auction-six-member.toml"
+    config = write_config(tmp_path, source.read_text(encoding="utf-8").replace(old, new, 1))
+    with pytest.raises(ValueError, match=match):
+        cli.load_auction_config(config)
+
+
 def test_config_rejects_member_period_mismatch(tmp_path):
     path = write_config(tmp_path, valid_toml().replace("periods = 2", "periods = 3"))
     with pytest.raises(ValueError, match="members must equal periods"):
