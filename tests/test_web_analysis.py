@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import date, timedelta
+from decimal import Decimal
 import importlib
 import random
 
@@ -65,3 +66,41 @@ def test_bad_case_does_not_become_zero_loss(bad):
                             forced_defaults=(AuctionEvent(1, 1),)))
     with pytest.raises(ValueError, match=case.name):
         analysis().run_named_cases((case,), data, 42, "close", "USD")
+
+
+def test_decimal_ratio_grid():
+    grid = analysis().ratio_grid
+    assert grid(Decimal("1"), Decimal("2"), Decimal(".5")) == (1.0, 1.5, 2.0)
+    assert grid(Decimal("1"), Decimal("2"), Decimal(".6")) == (1.0, 1.6)
+    with pytest.raises(ValueError):
+        grid(Decimal("1"), Decimal("2"), Decimal("0"))
+
+
+def test_common_windows_are_paired():
+    cases = (case_with_start(case_id="a"),
+             case_with_start(case_id="b", scenario=replace(example_case().scenario, grace_days=14)))
+    starts = analysis().sample_common_starts(cases, points(180), 3, 12)
+    assert starts == analysis().sample_common_starts(cases, points(180), 3, 12)
+    runs = analysis().run_sweep(cases, points(180), (0.5, 1.0), starts, 12, "close", "USD")
+    assert len(runs) == 12
+    for case_id in ("a", "b"):
+        assert {run.start for run in runs if run.case_id == case_id and run.ratio == 0.5} == set(starts)
+        assert {run.start for run in runs if run.case_id == case_id and run.ratio == 1.0} == set(starts)
+    assert len(runs[0].price_path.daily_prices) != len(runs[6].price_path.daily_prices)
+
+
+def test_sweep_cap_rejects_before_running():
+    case = case_with_start()
+    with pytest.raises(ValueError, match="10,000"):
+        analysis().run_sweep((case,), (), (1.0,) * 10001, (START,), 1, "close", "USD")
+    with pytest.raises(ValueError, match="available"):
+        analysis().sample_common_starts((case,), points(180), 1000, 1)
+
+
+def test_higher_ratio_can_change_winner():
+    base = example_case()
+    agents = (replace(base.scenario.agents[0], available_eth=0.3), *base.scenario.agents[1:])
+    case = case_with_start(scenario=replace(base.scenario, agents=agents))
+    low, high = analysis().run_sweep((case,), points(), (0.5, 2.0),
+                                     (START,), 42, "close", "USD")
+    assert low.result.payout_order != high.result.payout_order
