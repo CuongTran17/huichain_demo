@@ -10,6 +10,7 @@ dependencies = ["mesa==3.5.1", "networkx>=3.4,<4"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
+web = ["streamlit>=1.51,<2", "altair>=5,<7"]
 
 [project.scripts]
 rosca-sim = "rosca_sim.cli:main"

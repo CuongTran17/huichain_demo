@@ -1,0 +1,260 @@
+"""Local Streamlit research dashboard for auction ROSCA simulations."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, replace
+from datetime import date, timedelta
+import csv
+from io import StringIO
+import json
+from pathlib import Path
+from uuid import uuid4
+
+import altair as alt
+import pandas as pd
+import streamlit as st
+
+from rosca_sim.auction import AuctionAgentSeed, AuctionBid, AuctionEvent
+from rosca_sim.prices import load_price_csv, valid_historical_starts
+from rosca_sim.web_analysis import run_named_cases
+from rosca_sim.web_cases import dump_cases_json, example_case, load_cases_json
+from rosca_sim.web_reporting import (
+    comparison_rows, member_loss_rows, trace_rows, tradeoff_rows,
+)
+
+
+st.set_page_config(page_title="Phòng thí nghiệm hụi đấu giá", layout="wide")
+st.markdown("""<style>
+html, body, [class*="css"] {font-family: Manrope, sans-serif;}
+h1, h2, h3 {text-wrap: balance;}
+p {text-wrap: pretty;}
+</style>""", unsafe_allow_html=True)
+st.title("Phòng thí nghiệm hụi đấu giá")
+st.caption("So sánh tổn thất và ETH phải khóa trên giá lịch sử. Đây là mô phỏng nghiên cứu, không phải cam kết bảo vệ vốn.")
+
+if "cases" not in st.session_state:
+    st.session_state.cases = (example_case(),)
+if "manual_runs" not in st.session_state:
+    st.session_state.manual_runs = ()
+if "run_signature" not in st.session_state:
+    st.session_state.run_signature = None
+if "selected_case_next" in st.session_state:
+    st.session_state.selected_case = st.session_state.pop("selected_case_next")
+
+
+def _signature():
+    path = Path(st.session_state.get("csv_path", "")).expanduser()
+    mtime = path.stat().st_mtime_ns if path.is_file() else None
+    return (dump_cases_json(st.session_state.cases), str(path.resolve()), mtime,
+            st.session_state.get("source_label", ""), st.session_state.get("quote_asset", "USD"))
+
+
+@st.cache_data(show_spinner=False)
+def _read_points(path: str, mtime_ns: int):
+    return load_price_csv(Path(path), date.min, date.max)
+
+
+def _points():
+    path = Path(st.session_state.csv_path).expanduser()
+    if not path.is_file():
+        raise ValueError("Không tìm thấy tệp CSV giá ETH. Hãy nhập đường dẫn tệp date,close có thật.")
+    return _read_points(str(path.resolve()), path.stat().st_mtime_ns)
+
+
+def _csv_bytes(rows):
+    if not rows:
+        return b""
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(rows[0]))
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue().encode("utf-8-sig")
+
+
+with st.sidebar:
+    st.subheader("Nguồn giá ETH")
+    st.text_input("Đường dẫn CSV giá ETH", key="csv_path", placeholder="C:/data/eth_daily.csv")
+    st.text_input("Tên nguồn giá", key="source_label", value="ETH daily close")
+    st.selectbox("Đơn vị giá ETH", ("USD", "USDT"), key="quote_asset")
+    st.caption("CSV có hai cột date,close theo ngày. Giả định quy đổi: 1 USD hoặc 1 USDT ≈ 1 USDC. Giá đóng cửa không bảo đảm bán ETH được ở mức đó.")
+
+st.subheader("So sánh kịch bản")
+st.caption("Một người chỉ ký quỹ khi lĩnh hụi. Lãi chào thắng bị khấu trừ ngay, giữ trong quỹ; các kỳ sau người đó vẫn chỉ góp đúng khoản cố định.")
+
+cases = st.session_state.cases
+if cases:
+    ids = [case.case_id for case in cases]
+    selected_id = st.session_state.get("selected_case")
+    if selected_id not in ids:
+        st.session_state.selected_case = ids[0]
+    st.selectbox("Mã dây đang chỉnh", ids, key="selected_case")
+    case = next(case for case in cases if case.case_id == st.session_state.selected_case)
+    st.markdown(f"**Dây {case.scenario.rosca.members} người**, {case.scenario.rosca.contribution:,.0f} USDC mỗi kỳ")
+    left, middle, right = st.columns(3)
+    if left.button("Nhân bản dây", key="clone_case"):
+        clone = replace(case, case_id=uuid4().hex, name=f"{case.name} (bản sao)")
+        st.session_state.cases = (*cases, clone)
+        st.session_state.selected_case_next = clone.case_id
+        st.rerun()
+    if middle.button("Xóa dây", key="remove_case"):
+        st.session_state.cases = tuple(item for item in cases if item.case_id != case.case_id)
+        st.session_state.selected_case_next = st.session_state.cases[0].case_id if st.session_state.cases else None
+        st.rerun()
+else:
+    st.info("Chưa có dây hụi. Thêm dây mẫu hoặc nhập bộ kịch bản JSON để bắt đầu.")
+    if st.button("Thêm dây mẫu", key="add_example"):
+        st.session_state.cases = (replace(example_case(), case_id=uuid4().hex),)
+        st.rerun()
+
+with st.expander("Nhập hoặc xuất bộ kịch bản JSON"):
+    st.text_area("Dán JSON kịch bản", key="import_json", height=100)
+    if st.button("Nhập kịch bản", key="import_cases"):
+        try:
+            incoming = load_cases_json(st.session_state.import_json)
+            st.session_state.cases = incoming
+            st.session_state.selected_case_next = incoming[0].case_id if incoming else None
+            st.success(f"Đã nhập {len(incoming)} kịch bản.")
+            st.rerun()
+        except (ValueError, TypeError) as error:
+            st.error(f"JSON không hợp lệ: {error}")
+    st.download_button("Tải bộ kịch bản JSON", dump_cases_json(st.session_state.cases),
+                       file_name="rosca_cases.json", mime="application/json")
+
+if cases:
+    points = None
+    if st.session_state.get("csv_path"):
+        try:
+            points = _points()
+            st.caption(f"Nguồn: {st.session_state.source_label} · {points[0].day} đến {points[-1].day} · {len(points)} giá đóng cửa ngày")
+        except (ValueError, OSError, IndexError) as error:
+            st.error(f"Dữ liệu giá: {error}")
+    with st.expander("Chỉnh điều kiện dây hụi", expanded=True):
+        with st.form("case_editor"):
+            name = st.text_input("Tên kịch bản", value=case.name)
+            a, b, c = st.columns(3)
+            members = a.number_input("Số người và số kỳ", 6, 100, case.scenario.rosca.members)
+            contribution = b.number_input("Đóng mỗi kỳ (USDC)", min_value=0.01,
+                                           value=float(case.scenario.rosca.contribution))
+            period_days = c.number_input("Số ngày mỗi kỳ", 1, 365, case.scenario.rosca.period_days)
+            d, e = st.columns(2)
+            ratio = d.number_input("Tỷ lệ ký quỹ / nghĩa vụ còn lại", min_value=0.0,
+                                   value=float(case.scenario.collateral.fixed_ratio), step=0.1)
+            grace = e.number_input("Ân hạn quyết toán (ngày)", 0, 365, case.scenario.grace_days)
+            st.caption("Tỷ lệ 1,5 nghĩa là khóa ETH trị giá 150% phần góp cố định còn lại; không phải 150% khoản lĩnh ròng.")
+            agent_rows = st.data_editor([asdict(agent) for agent in case.scenario.agents],
+                                        key="agent_editor", num_rows="dynamic", hide_index=True)
+            st.caption("Mỗi hàng người chơi: ETH sẵn có, khả năng nộp USDC, cách quyết toán và ngày thanh toán.")
+            bid_rows = st.data_editor([asdict(bid) for bid in case.scenario.bids],
+                                      key="bid_editor", num_rows="dynamic", hide_index=True)
+            st.caption("Mỗi hàng chào lãi: kỳ, ID người chơi, tỷ lệ lãi. Người đã lĩnh không chào tiếp.")
+            defaults = st.text_area("Người đã lĩnh bùng: JSON sự kiện", value=json.dumps(
+                [asdict(item) for item in case.scenario.forced_defaults], ensure_ascii=False))
+            missed = st.text_area("Người chưa lĩnh bỏ góp: JSON sự kiện", value=json.dumps(
+                [asdict(item) for item in case.scenario.missed_contributions], ensure_ascii=False))
+            st.caption("Sự kiện cùng ngày được xử lý trong một đợt. Dây dừng ở ngày bùng đầu tiên; sự kiện sau đó không chạy.")
+            starts = valid_historical_starts(points, int(members), int(period_days), int(grace)) if points else ()
+            options = (None, *starts)
+            chosen_start = st.selectbox("Ngày bắt đầu cửa sổ ETH", options,
+                index=options.index(case.window_start) if case.window_start in options else 0)
+            st.caption(f"{len(starts)} cửa sổ lịch sử đầy đủ cho dây này, gồm cả phần đuôi ân hạn.")
+            save = st.form_submit_button("Lưu điều kiện dây")
+        if save:
+            try:
+                agents = tuple(AuctionAgentSeed(**row) for row in agent_rows)
+                bids = tuple(AuctionBid(**row) for row in bid_rows)
+                scenario = replace(case.scenario,
+                    rosca=replace(case.scenario.rosca, members=int(members), periods=int(members),
+                                  contribution=float(contribution), period_days=int(period_days)),
+                    collateral=replace(case.scenario.collateral, fixed_ratio=float(ratio)),
+                    agents=agents, bids=bids,
+                    forced_defaults=tuple(AuctionEvent(**item) for item in json.loads(defaults)),
+                    missed_contributions=tuple(AuctionEvent(**item) for item in json.loads(missed)),
+                    grace_days=int(grace))
+                changed = replace(case, name=name, scenario=scenario, window_start=chosen_start)
+                changed, = load_cases_json(dump_cases_json((changed,)))
+                st.session_state.cases = tuple(changed if item.case_id == case.case_id else item for item in cases)
+                st.success("Đã lưu. Hãy chạy lại để cập nhật kết quả.")
+                st.rerun()
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
+                st.error(f"Điều kiện dây chưa hợp lệ: {error}")
+
+if st.button("Chạy các kịch bản", key="run_cases", disabled=not st.session_state.cases):
+    try:
+        if len(st.session_state.cases) > 10_000:
+            raise ValueError("Vượt giới hạn 10.000 lượt chạy")
+        if not st.session_state.source_label.strip():
+            raise ValueError("Cần ghi tên nguồn giá ETH")
+        with st.spinner("Đang chạy từng dây hụi..."):
+            st.session_state.manual_runs = run_named_cases(
+                st.session_state.cases, _points(), 42,
+                st.session_state.source_label, st.session_state.quote_asset)
+            st.session_state.run_signature = _signature()
+    except (ValueError, OSError) as error:
+        st.error(f"Không thể chạy kịch bản: {error}")
+
+runs = st.session_state.manual_runs
+if runs:
+    if st.session_state.run_signature != _signature():
+        st.warning("Kết quả cũ: điều kiện dây, dữ liệu CSV hoặc nhãn nguồn đã thay đổi. Hãy chạy lại.")
+    st.subheader("Tổn thất giữa các kịch bản")
+    comparison = comparison_rows(runs)
+    losses = member_loss_rows(runs)
+    tradeoffs = tradeoff_rows(runs)
+    st.caption(f"{len(runs)} dây · {runs[0].source_label} · giá ETH bằng {runs[0].quote_asset}; bùng và chào lãi là giả định do người nghiên cứu đặt.")
+    if all(row["principal_loss_usdc"] == 0 for row in comparison):
+        st.success("Không có lỗ gốc trong các lượt lịch sử vừa thử; đây không phải bảo đảm an toàn tương lai.")
+    bars = [{"case_name": row["case_name"], "Chỉ tiêu": kind, "USDC": row[key]}
+            for row in comparison for kind, key in (("Tổng lỗ gốc", "principal_loss_usdc"),
+                                                     ("Lỗ lớn nhất một người", "worst_member_loss_usdc"))]
+    st.altair_chart(alt.Chart(pd.DataFrame(bars)).mark_bar().encode(
+        x=alt.X("case_name:N", title="Kịch bản"), y=alt.Y("USDC:Q", title="Lỗ gốc (USDC)"),
+        color="Chỉ tiêu:N", xOffset="Chỉ tiêu:N", tooltip=list(bars[0])), width="stretch")
+    st.altair_chart(alt.Chart(pd.DataFrame(losses)).mark_rect().encode(
+        x=alt.X("member_id:O", title="Người chơi"), y=alt.Y("case_name:N", title="Kịch bản"),
+        color=alt.Color("principal_loss_usdc:Q", title="Lỗ gốc (USDC)"),
+        tooltip=["case_name", "member_id", "principal_loss_usdc", "contributed_usdc",
+                 "net_payout_usdc", "interest_received_usdc", "eth_sold", "eth_returned"]), width="stretch")
+    st.altair_chart(alt.Chart(pd.DataFrame(tradeoffs)).mark_circle(size=120).encode(
+        x=alt.X("max_member_initial_lock_usdc_proxy:Q", title="ETH khóa lúc lĩnh, quy đổi USDC giả định"),
+        y=alt.Y("worst_member_loss_usdc:Q", title="Lỗ gốc lớn nhất một người (USDC)"),
+        color="case_name:N", tooltip=["case_name", "ratio", "max_member_initial_lock_usdc_proxy",
+                                      "worst_member_loss_usdc"]), width="stretch")
+    st.caption("ETH khóa vẫn thuộc người lĩnh, không phải phí. Giá trị quy đổi dùng giá đóng cửa; 1 USD hoặc USDT ≈ 1 USDC chỉ là giả định.")
+    st.dataframe(list(comparison), hide_index=True, width="stretch")
+    st.download_button("Tải bảng so sánh CSV", _csv_bytes(comparison), "so_sanh.csv", "text/csv")
+    run_labels = [f"{run.case.name} · {run.price_path.start_date}" for run in runs]
+    selected = st.selectbox("Mở chi tiết dây", run_labels)
+    run = runs[run_labels.index(selected)]
+    result = run.result
+    st.subheader(f"Diễn biến: {run.case.name}")
+    st.markdown(f"Lĩnh kỳ đầu **{run.trace[0].net_payout:,.0f} USDC**, lãi giữ quỹ **{run.trace[0].bid_interest:,.0f} USDC**. "
+                f"Thứ tự lĩnh: {result.payout_order}. Dừng: {result.stop_reason}, ngày {result.freeze_day}; "
+                f"quyết toán ngày {result.settlement_day}.")
+    st.caption(f"Lãi còn quỹ {result.interest_retained:,.2f} USDC · dùng bù gốc {result.interest_used:,.2f} USDC · chia lại {result.interest_distributed:,.2f} USDC")
+    price_rows = [{"date": (run.case.window_start + timedelta(days=i)).isoformat(),
+                   "close": price} for i, price in enumerate(run.price_path.daily_prices)]
+    st.altair_chart(alt.Chart(pd.DataFrame(price_rows)).mark_line().encode(
+        x=alt.X("date:T", title="Ngày lịch sử"),
+        y=alt.Y("close:Q", title=f"Giá ETH ({run.quote_asset}/ETH)"),
+        tooltip=["date", "close"]), width="stretch")
+    st.caption("Giá đóng cửa quan sát được; điểm lĩnh, đóng băng và bán ETH không chứng minh lệnh bán khớp ở giá này.")
+    trace = trace_rows(run)
+    pool = [row for row in trace if row["member_id"] == 0]
+    st.altair_chart(alt.Chart(pd.DataFrame(pool)).transform_fold(
+        ["pool_cash_usdc", "retained_interest_usdc"], as_=["Chỉ tiêu", "USDC"]
+    ).mark_line(point=True).encode(x=alt.X("day:Q", title="Ngày trong dây"),
+                                   y=alt.Y("USDC:Q", title="Quỹ (USDC)"),
+                                   color="Chỉ tiêu:N"), width="stretch")
+    st.altair_chart(alt.Chart(pd.DataFrame(trace)).transform_fold(
+        ["cumulative_contribution_usdc", "cumulative_payout_usdc"],
+        as_=["Chỉ tiêu", "USDC"]
+    ).mark_line(point=True).encode(x=alt.X("day:Q", title="Ngày trong dây"),
+                                   y=alt.Y("USDC:Q", title="Lũy kế (USDC)"),
+                                   color="Chỉ tiêu:N", detail="member_id:O"), width="stretch")
+    st.dataframe(list(trace), hide_index=True, width="stretch")
+    member_rows = tuple(row for row in losses if row["case_id"] == run.case.case_id)
+    st.dataframe(list(member_rows), hide_index=True, width="stretch")
+    st.download_button("Tải quyết toán từng người CSV", _csv_bytes(member_rows),
+                       "quyet_toan.csv", "text/csv")
+else:
+    st.info("Nhập CSV giá ETH, chọn ngày bắt đầu và chạy các kịch bản để xem biểu đồ kết quả.")
