@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO, TextIOWrapper
 import json
+from math import isfinite
 from pathlib import Path
 import random
 from tempfile import NamedTemporaryFile
@@ -40,12 +41,31 @@ def load_price_csv(path: Path, start: date, end: date) -> tuple[PricePoint, ...]
             close = float(row["close"])
             if day in seen:
                 raise ValueError(f"duplicate date: {day.isoformat()}")
-            if close <= 0:
-                raise ValueError(f"price must be positive: {day.isoformat()}")
+            if not isfinite(close) or close <= 0:
+                raise ValueError(f"price must be finite positive: {day.isoformat()}")
             seen.add(day)
             if start <= day <= end:
                 points.append(PricePoint(day, close))
     return tuple(sorted(points, key=lambda point: point.day))
+
+
+def valid_historical_starts(
+    points: tuple[PricePoint, ...], periods: int, period_days: int, extra_days: int = 0
+) -> tuple[date, ...]:
+    if periods < 1 or period_days < 1:
+        raise ValueError("periods and period_days must be positive")
+    if type(extra_days) is not int or extra_days < 0:
+        raise ValueError("extra_days must be a nonnegative integer")
+    days_needed = (periods - 1) * period_days + 1 + extra_days
+    starts: list[date] = []
+    next_day: date | None = None
+    run_length = 0
+    for point in reversed(points):
+        run_length = run_length + 1 if next_day == point.day + timedelta(days=1) else 1
+        if run_length >= days_needed:
+            starts.append(point.day)
+        next_day = point.day
+    return tuple(reversed(starts))
 
 
 def sample_historical_path(
@@ -57,26 +77,14 @@ def sample_historical_path(
     window_start: date | None = None,
     extra_days: int = 0,
 ) -> PricePath:
-    if periods < 1 or period_days < 1:
-        raise ValueError("periods and period_days must be positive")
-    if type(extra_days) is not int or extra_days < 0:
-        raise ValueError("extra_days must be a nonnegative integer")
     by_day = {point.day: point.close for point in points}
-    days_needed = (periods - 1) * period_days + 1 + extra_days
-    starts: list[date] = []
-    next_day: date | None = None
-    run_length = 0
-    for point in reversed(points):
-        run_length = run_length + 1 if next_day == point.day + timedelta(days=1) else 1
-        if run_length >= days_needed:
-            starts.append(point.day)
-        next_day = point.day
-    starts.reverse()
+    starts = valid_historical_starts(points, periods, period_days, extra_days)
     if not starts:
         raise ValueError("no complete historical window")
     if window_start is not None and window_start not in starts:
         raise ValueError("selected historical window is incomplete")
     start = window_start if window_start is not None else rng.choice(starts)
+    days_needed = (periods - 1) * period_days + 1 + extra_days
     daily = tuple(by_day[start + timedelta(days=i)] for i in range(days_needed))
     if normalize:
         initial = daily[0]

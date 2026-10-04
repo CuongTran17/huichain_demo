@@ -7,6 +7,7 @@ from zipfile import ZipFile
 
 import pytest
 
+from rosca_sim import prices as prices_module
 from rosca_sim.prices import (
     PricePoint,
     fetch_coingecko_prices,
@@ -79,6 +80,41 @@ def test_historical_window_can_be_pinned(tmp_path):
     )
     assert result.start_date == "2022-05-02"
     assert result.prices == pytest.approx((1.0, 0.875))
+
+
+def test_complete_starts_skip_gap():
+    points = tuple(
+        PricePoint(date(2026, 1, day), 100.0)
+        for day in (1, 2, 4, 5, 6, 7)
+    )
+    assert prices_module.valid_historical_starts(points, 2, 1, 1) == (
+        date(2026, 1, 4),
+        date(2026, 1, 5),
+    )
+
+
+def test_missing_grace_tail_has_no_valid_start():
+    points = tuple(PricePoint(date(2026, 1, day), 100.0) for day in (1, 2))
+    assert prices_module.valid_historical_starts(points, 2, 1, 1) == ()
+
+
+@pytest.mark.parametrize("close", ("nan", "inf"))
+def test_nonfinite_close_rejected(tmp_path, close):
+    path = tmp_path / "prices.csv"
+    path.write_text(f"date,close\n2026-01-01,{close}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="finite positive"):
+        load_price_csv(path, date(2026, 1, 1), date(2026, 1, 1))
+
+
+def test_pinned_window_keeps_real_close(tmp_path):
+    path = tmp_path / "prices.csv"
+    path.write_text("date,close\n2026-01-01,100\n2026-01-02,110\n", encoding="utf-8")
+    points = load_price_csv(path, date(2026, 1, 1), date(2026, 1, 2))
+    result = sample_historical_path(
+        points, 2, 1, random.Random(1), normalize=False,
+        window_start=date(2026, 1, 1),
+    )
+    assert result.daily_prices == (100.0, 110.0)
 
 
 @pytest.mark.parametrize(
