@@ -40,6 +40,57 @@ def test_six_member_winning_discount_and_lock():
     assert all(model.agents_by_id[i].locked_eth == 0 for i in range(1, 6))
 
 
+def test_trace_matches_first_auction():
+    model = AuctionRoscaModel(scenario([(0, 0, 0.20)]), "fixed", constant_prices())
+    model.step()
+    trace = model.period_trace
+    assert len(trace) == 1
+    assert trace[0].period == 0
+    assert trace[0].day == 0
+    assert trace[0].winner_id == 0
+    assert trace[0].contributions_by_member == (100.0,) * 6
+    assert trace[0].gross_pot == 600.0
+    assert trace[0].bid_interest == 120.0
+    assert trace[0].net_payout == 480.0
+    assert trace[0].eth_locked_by_member == (500.0,) + (0.0,) * 5
+    assert trace[0].pool_cash == 120.0
+
+
+def test_trace_releases_after_fixed_contribution():
+    model = AuctionRoscaModel(
+        scenario([(0, 0, 0.20), (1, 1, 0.10)]), "fixed", constant_prices()
+    )
+    model.step()
+    model.step()
+    assert model.period_trace[1].contributions_by_member[0] == 100.0
+    assert model.period_trace[1].eth_released_by_member[0] == 100.0
+    assert model.period_trace[1].winner_id == 1
+
+
+def test_freeze_trace_omits_next_round():
+    original = scenario([(0, 0, 0.20), (1, 1, 0.10)])
+    case = replace(original, forced_defaults=(AuctionEvent(0, 30),))
+    model = AuctionRoscaModel(case, "fixed", constant_prices())
+    result = model.run()
+    assert result.freeze_day == 30
+    assert len(model.period_trace) == 1
+    assert model.period_trace[0].winner_id == 0
+
+
+def test_same_day_default_trace_order_independent():
+    original = scenario([(0, 0, 0.20), (1, 1, 0.10)])
+    events = (AuctionEvent(0, 31), AuctionEvent(1, 31))
+    first = AuctionRoscaModel(replace(original, forced_defaults=events), "fixed", constant_prices())
+    second = AuctionRoscaModel(
+        replace(original, forced_defaults=tuple(reversed(events)) + (AuctionEvent(0, 60),)),
+        "fixed", constant_prices(),
+    )
+    first_result = first.run()
+    second_result = second.run()
+    assert first_result == second_result
+    assert first.period_trace == second.period_trace
+
+
 def test_paid_member_cannot_bid_again_or_pay_extra_interest():
     model = AuctionRoscaModel(
         scenario([(0, 0, 0.20), (1, 0, 0.90), (1, 1, 0.10)]),

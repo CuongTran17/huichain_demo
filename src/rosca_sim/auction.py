@@ -106,6 +106,21 @@ class AuctionRunResult:
     agent_results: tuple[AuctionAgentResult, ...]
 
 
+@dataclass(frozen=True)
+class AuctionPeriodTrace:
+    period: int
+    day: int
+    contributions_by_member: tuple[float, ...]
+    winner_id: int | None
+    gross_pot: float
+    bid_interest: float
+    net_payout: float
+    eth_locked_by_member: tuple[float, ...]
+    eth_released_by_member: tuple[float, ...]
+    pool_cash: float
+    retained_interest: float
+
+
 class AuctionAgent(Agent):
     def __init__(self, model: AuctionRoscaModel, seed: AuctionAgentSeed):
         super().__init__(model)
@@ -274,6 +289,29 @@ class AuctionRoscaModel(Model):
         self.default_ids: set[int] = set()
         self.total_collateral_locked = 0.0
         self.eth_sale_proceeds = 0.0
+        self._period_trace: list[AuctionPeriodTrace] = []
+
+    @property
+    def period_trace(self) -> tuple[AuctionPeriodTrace, ...]:
+        return tuple(self._period_trace)
+
+    def _record_period(
+        self, period: int, day: int, before: tuple[tuple[float, float, float], ...],
+        winner_id: int | None, bid_interest: float, net_payout: float,
+    ) -> None:
+        agents = tuple(self.agents_by_id[i] for i in range(self.auction.rosca.members))
+        self._period_trace.append(AuctionPeriodTrace(
+            period=period, day=day,
+            contributions_by_member=tuple(a.total_contributed - old[0] for a, old in zip(agents, before)),
+            winner_id=winner_id,
+            gross_pot=self.auction.rosca.members * self.auction.rosca.contribution,
+            bid_interest=bid_interest,
+            net_payout=net_payout,
+            eth_locked_by_member=tuple(a.initial_locked_eth - old[1] for a, old in zip(agents, before)),
+            eth_released_by_member=tuple(a.eth_released - old[2] for a, old in zip(agents, before)),
+            pool_cash=self.cash_balance,
+            retained_interest=self.interest_balance,
+        ))
 
     def _required_eth(self, agent: AuctionAgent, period: int, price: float) -> float:
         obligation = self.auction.rosca.contribution * (self.auction.rosca.periods - period - 1)
@@ -298,6 +336,11 @@ class AuctionRoscaModel(Model):
         if day in self.events_by_day:
             self._freeze_events(day)
             return
+        period = self.period
+        before = tuple(
+            (a.total_contributed, a.initial_locked_eth, a.eth_released)
+            for a in (self.agents_by_id[i] for i in range(rosca.members))
+        )
         price = self.price_path.prices[self.period]
         self.cash_balance += sum(agent.contribute(day) for agent in self.agents_by_id.values())
         candidates = sorted(
@@ -318,6 +361,7 @@ class AuctionRoscaModel(Model):
         if winner is None or winning_bid is None:
             self.stop_reason = "no_eligible_bid"
             self.freeze_day = day
+            self._record_period(period, day, before, None, 0.0, 0.0)
             return
         winner.available_eth -= required_eth
         winner.locked_eth = required_eth
@@ -333,6 +377,7 @@ class AuctionRoscaModel(Model):
         self.cash_balance -= winner.net_payout
         self.interest_balance += discount
         self.payout_order.append(winner.member_id)
+        self._record_period(period, day, before, winner.member_id, discount, winner.net_payout)
         self.period += 1
         if self.period == rosca.periods:
             self.stop_reason = "completed"
