@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import asdict, replace
 from datetime import timedelta
+import json
 from statistics import mean, median
 
 from rosca_sim.web_analysis import CaseRun, SweepRun
+from rosca_sim.web_cases import NamedCase
 
 
 def _meta(run: CaseRun | SweepRun) -> dict[str, object]:
@@ -105,29 +108,61 @@ def frontier_rows(runs: tuple[SweepRun, ...]) -> tuple[dict[str, object], ...]:
         baseline.update({(case_id, run.start): run.result.payout_order
                          for run in grouped[(case_id, low)]})
     rows = []
-    prior_worst: dict[str, float] = {}
+    prior: dict[str, dict[str, float]] = {}
     for (case_id, ratio), group in sorted(grouped.items()):
         losses = [run.result.principal_loss for run in group]
         worst = max(run.result.worst_member_loss for run in group)
+        first_day = min(run.start for run in group)
+        last_day = max(run.start + timedelta(days=len(run.price_path.daily_prices) - 1)
+                       for run in group)
+        loss_count = sum(loss > 1e-9 for loss in losses)
+        metrics = {
+            "mean_loss_usdc": mean(losses),
+            "worst_member_loss_usdc": worst,
+            "loss_run_share": loss_count / len(group),
+        }
+        rising = tuple(key for key, value in metrics.items()
+                       if case_id in prior and value > prior[case_id][key] + 1e-9)
         row = {
             **_meta(group[0]), "case_id": case_id, "ratio": ratio,
-            "runs": len(group), "mean_loss_usdc": mean(losses),
-            "worst_member_loss_usdc": worst,
-            "loss_run_count": sum(loss > 1e-9 for loss in losses),
-            "loss_run_share": sum(loss > 1e-9 for loss in losses) / len(group),
+            "start_date": first_day.isoformat(), "end_date": last_day.isoformat(),
+            "runs": len(group), **metrics,
+            "loss_run_count": loss_count,
             "median_max_member_lock_usdc_proxy": median(_lock_proxy(run) for run in group),
             "changed_order_count": sum(run.result.payout_order != baseline[(case_id, run.start)]
                                        for run in group),
-            "nonmonotonic": case_id in prior_worst and worst > prior_worst[case_id] + 1e-9,
+            "no_eligible_bid_count": sum(run.result.stop_reason == "no_eligible_bid"
+                                         for run in group),
+            "nonmonotonic": bool(rising),
+            "nonmonotonic_metrics": ", ".join(rising),
             "window_count": len(group),
             "seed": group[0].result.seed,
         }
         rows.append(row)
-        prior_worst[case_id] = worst
+        prior[case_id] = metrics
     return tuple(rows)
+
+
+def sweep_run_rows(runs: tuple[SweepRun, ...], cases: tuple[NamedCase, ...]
+                   ) -> tuple[dict[str, object], ...]:
+    """Export each run with the exact scenario snapshot used to generate it."""
+    by_id = {case.case_id: case for case in cases}
+    return tuple({
+        **_meta(run), "case_id": run.case_id, "case_name": by_id[run.case_id].name,
+        "ratio": run.ratio, "seed": run.result.seed,
+        "scenario_json": json.dumps(asdict(replace(
+            by_id[run.case_id].scenario,
+            collateral=replace(by_id[run.case_id].scenario.collateral, fixed_ratio=run.ratio))),
+                                    ensure_ascii=False, sort_keys=True),
+        "worst_member_loss_usdc": run.result.worst_member_loss,
+        "principal_loss_usdc": run.result.principal_loss,
+        "stop_reason": run.result.stop_reason,
+        "payout_order": ", ".join(map(str, run.result.payout_order)),
+    } for run in runs)
 
 
 def candidate_ratio(rows: tuple[dict[str, object], ...], case_id: str) -> float | None:
     candidates = [float(row["ratio"]) for row in rows
-                  if row["case_id"] == case_id and row["loss_run_count"] == 0]
+                  if row["case_id"] == case_id and row["loss_run_count"] == 0
+                  and row.get("no_eligible_bid_count", 0) == 0]
     return min(candidates) if candidates else None
