@@ -85,6 +85,8 @@ def run_auction_experiment(
         "runs": runs,
         "seed": seed,
         "grace_days": scenario.grace_days,
+        "scenario": asdict(scenario),
+        "collateral_release_policy": "terminal",
         "price_labels": sorted(price_labels),
         "price_windows": sorted(window for window in windows if window is not None),
         "assumptions": ["exogenous bids and defaults", "daily closes are not intraday execution prices",

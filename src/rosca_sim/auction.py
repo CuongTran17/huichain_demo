@@ -80,6 +80,9 @@ class AuctionAgentResult:
     settlement_mode: str
     payment_day: int | None
     obligation_uncollected: float
+    bid_interest_paid: float
+    is_trigger_default: bool
+    settlement_shortfall: bool
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,9 @@ class AuctionRunResult:
     eth_sale_proceeds: float
     ending_cash: float
     agent_results: tuple[AuctionAgentResult, ...]
+    interest_used_from_defaulting: float
+    interest_used_from_other_members: float
+    secondary_shortfall_count: int
 
 
 @dataclass(frozen=True)
@@ -135,6 +141,7 @@ class AuctionAgent(Agent):
         self.net_payout = 0.0
         self.payout_day: int | None = None
         self.winning_bid: float | None = None
+        self.bid_interest_paid = 0.0
         self.remaining_obligation = 0.0
         self.initial_obligation = 0.0
         self.initial_locked_eth = 0.0
@@ -366,6 +373,7 @@ class AuctionRoscaModel(Model):
         winner.winning_bid = winning_bid.rate
         gross = rosca.members * rosca.contribution
         discount = gross * winning_bid.rate
+        winner.bid_interest_paid = discount
         winner.net_payout = gross - discount
         self.cash_balance -= winner.net_payout
         self.interest_balance += discount
@@ -454,6 +462,9 @@ class AuctionRoscaModel(Model):
         repaid = min(total_claim, self.cash_balance)
         non_interest_cash = max(0.0, self.cash_balance - self.interest_balance)
         interest_used = min(self.interest_balance, max(0.0, repaid - non_interest_cash))
+        default_interest = sum(a.bid_interest_paid for a in self.agents_by_id.values()
+                               if a.member_id in self.default_ids)
+        interest_from_defaulting = min(interest_used, default_interest)
         for member_id, claim in claims.items():
             self.agents_by_id[member_id].principal_repaid = repaid * claim / total_claim if total_claim else 0.0
         self.cash_balance -= repaid
@@ -482,6 +493,9 @@ class AuctionRoscaModel(Model):
                 eth_sale_day=a.eth_sale_day, eth_sale_price=a.eth_sale_price,
                 usdc_settlement_paid=a.usdc_settlement_paid, settlement_mode=a.settlement_mode,
                 payment_day=a.payment_day, obligation_uncollected=a.obligation_uncollected,
+                bid_interest_paid=a.bid_interest_paid,
+                is_trigger_default=a.member_id in self.default_ids,
+                settlement_shortfall=a.payout_day is not None and a.obligation_uncollected > 1e-9,
             ) for a in (self.agents_by_id[i] for i in sorted(self.agents_by_id))
         )
         assert abs(cash_before_waterfall - repaid - interest_distributed - self.cash_balance) < 1e-6
@@ -506,6 +520,10 @@ class AuctionRoscaModel(Model):
             total_collateral_locked=self.total_collateral_locked,
             eth_sale_proceeds=self.eth_sale_proceeds, ending_cash=self.cash_balance,
             agent_results=results,
+            interest_used_from_defaulting=interest_from_defaulting,
+            interest_used_from_other_members=interest_used - interest_from_defaulting,
+            secondary_shortfall_count=sum(r.settlement_shortfall and not r.is_trigger_default
+                                          for r in results),
         )
 
     def run(self) -> AuctionRunResult:

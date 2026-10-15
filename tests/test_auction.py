@@ -210,6 +210,63 @@ def test_sale_slippage_does_not_reduce_initial_bid_collateral():
     assert result.interest_distributed == pytest.approx(70)
 
 
+@pytest.mark.parametrize("first_bid,sale_price,from_default,from_others,used", [
+    (0.2, 0.5, 120, 30, 150),
+    (0.2, 0.7, 50, 0, 50),
+    (0.0, 0.5, 0, 40, 40),
+])
+def test_interest_sources_follow_freeze_group_not_event_order(
+    first_bid, sale_price, from_default, from_others, used,
+):
+    original = scenario([(0, 0, first_bid), (1, 1, 40 / 600)])
+    case = replace(original, forced_defaults=(AuctionEvent(0, 60),),
+                   missed_contributions=(AuctionEvent(2, 60), AuctionEvent(3, 60)))
+    daily = (1.0,) * 60 + (sale_price,) * 98
+    prices = PricePath((1.0, 1.0) + (sale_price,) * 4, "sources", None, daily)
+    result = AuctionRoscaModel(case, "fixed", prices).run()
+    reversed_result = AuctionRoscaModel(replace(case,
+        missed_contributions=tuple(reversed(case.missed_contributions))), "fixed", prices).run()
+    assert result == reversed_result
+    assert result.interest_used == pytest.approx(used)
+    assert result.interest_used_from_defaulting == pytest.approx(from_default)
+    assert result.interest_used_from_other_members == pytest.approx(from_others)
+    assert result.agent_results[0].bid_interest_paid == pytest.approx(600 * first_bid)
+    assert result.agent_results[1].bid_interest_paid == pytest.approx(40)
+    assert result.agent_results[2].bid_interest_paid == 0
+    assert result.agent_results[2].is_trigger_default
+    assert not result.agent_results[2].settlement_shortfall
+    assert result.obligation_uncollected == pytest.approx(max(0, 400 - 500 * sale_price))
+    if first_bid == 0.2 and sale_price == 0.5:
+        assert result.interest_distributed == pytest.approx(10)
+        assert result.principal_loss == 0
+
+
+def test_secondary_settlement_shortfall_is_not_a_trigger_default():
+    original = scenario([(0, 0, 0.2), (1, 1, 0.0)])
+    agents = tuple(replace(a, usdc_capacity=0) for a in original.agents)
+    case = replace(original, agents=agents, forced_defaults=(AuctionEvent(0, 31),))
+    daily = [1.0] * 158
+    daily[0], daily[30] = 0.5, 2.0
+    prices = PricePath((0.5, 2.0) + (1.0,) * 4, "secondary", None, tuple(daily))
+    result = AuctionRoscaModel(case, "fixed", prices).run()
+    first, second, *savers = result.agent_results
+    assert first.is_trigger_default and not first.settlement_shortfall
+    assert not second.is_trigger_default and second.settlement_shortfall
+    assert second.obligation_uncollected == pytest.approx(200)
+    assert result.default_count == 1
+    assert result.secondary_shortfall_count == 1
+    assert not any(a.settlement_shortfall for a in savers)
+
+
+def test_completion_has_no_interest_buffer_usage_or_shortfalls():
+    result = AuctionRoscaModel(scenario([(i, i, 0.1) for i in range(6)]),
+                              "fixed", constant_prices()).run()
+    assert result.interest_used_from_defaulting == 0
+    assert result.interest_used_from_other_members == 0
+    assert result.secondary_shortfall_count == 0
+    assert not any(a.is_trigger_default or a.settlement_shortfall for a in result.agent_results)
+
+
 def test_due_date_default_freezes_before_new_contributions():
     original = scenario([(0, 0, 0.2), (1, 1, 0.1)])
     case = replace(original, forced_defaults=(AuctionEvent(0, 30),))

@@ -1,4 +1,5 @@
 import csv
+import json
 from dataclasses import replace
 from rosca_sim.auction import AuctionAgentSeed, AuctionBid, AuctionEvent, AuctionRoscaModel, AuctionScenario
 from rosca_sim.auction_experiment import run_auction_experiment, run_auction_grace_sweep, run_auction_pair
@@ -38,6 +39,17 @@ def test_experiment_outputs_are_distinct_and_reproducible(tmp_path):
         rows = list(csv.DictReader(handle))
     assert {"net_payout", "winning_bid", "eth_sold", "eth_returned", "principal_claim", "principal_loss", "interest_received"} <= set(rows[0])
     assert not (a / "run_results.csv").exists()
+    assert {"bid_interest_paid", "is_trigger_default", "settlement_shortfall"} <= set(rows[0])
+    metadata = json.loads((a / "auction_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["collateral_release_policy"] == "terminal"
+    assert metadata["scenario"]["collateral"]["liquidation_slippage"] == 0
+    assert metadata["scenario"]["agents"][0]["usdc_capacity"] == 500
+    with (a / "auction_run_results.csv").open(newline="", encoding="utf-8") as handle:
+        run_rows = list(csv.DictReader(handle))
+    for row in run_rows:
+        assert float(row["interest_used_from_defaulting"]) + float(
+            row["interest_used_from_other_members"]) == float(row["interest_used"])
+        assert "secondary_shortfall_count" in row
 
 
 def test_grace_sweep_reuses_path_and_records_worst_loss(tmp_path):
