@@ -157,13 +157,6 @@ class AuctionAgent(Agent):
             self.pre_payout_contributions.append((day, amount))
         else:
             self.remaining_obligation = max(0.0, self.remaining_obligation - amount)
-            if self.initial_obligation > 0:
-                release = min(
-                    self.locked_eth,
-                    self.initial_locked_eth * amount / self.initial_obligation,
-                )
-                self.locked_eth -= release
-                self.eth_released += release
         return amount
 
 

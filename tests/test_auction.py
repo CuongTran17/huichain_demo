@@ -56,14 +56,16 @@ def test_trace_matches_first_auction():
     assert trace[0].pool_cash == 120.0
 
 
-def test_trace_releases_after_fixed_contribution():
+def test_trace_keeps_eth_after_fixed_contribution():
     model = AuctionRoscaModel(
         scenario([(0, 0, 0.20), (1, 1, 0.10)]), "fixed", constant_prices()
     )
     model.step()
     model.step()
     assert model.period_trace[1].contributions_by_member[0] == 100.0
-    assert model.period_trace[1].eth_released_by_member[0] == 100.0
+    assert model.period_trace[1].eth_released_by_member[0] == 0.0
+    assert model.agents_by_id[0].remaining_obligation == 400.0
+    assert model.agents_by_id[0].locked_eth == 500.0
     assert model.period_trace[1].winner_id == 1
 
 
@@ -181,6 +183,31 @@ def test_normal_completion_distributes_interest_by_wait():
     interests = [r.interest_received for r in result.agent_results]
     assert interests[0] == 0.0
     assert interests == sorted(interests)
+
+
+def test_completion_returns_full_initial_eth():
+    bids = [(period, period, 0.2 if period == 0 else 0.0) for period in range(6)]
+    prices = PricePath((2000.0,) * 6, "constant", None, (2000.0,) * 158)
+    result = AuctionRoscaModel(scenario(bids), "fixed", prices).run()
+    assert result.agent_results[0].eth_locked == pytest.approx(0.25)
+    for member in result.agent_results:
+        assert member.eth_released == 0
+        assert member.eth_sold == 0
+        assert member.eth_returned == pytest.approx(member.eth_locked)
+
+
+def test_sale_slippage_does_not_reduce_initial_bid_collateral():
+    original = scenario([(0, 0, 0.2)])
+    case = replace(original, collateral=replace(original.collateral, liquidation_slippage=0.1),
+                   forced_defaults=(AuctionEvent(0, 1),), grace_days=0)
+    prices = PricePath((2000.0,) * 6, "constant", None, (2000.0,) * 158)
+    result = AuctionRoscaModel(case, "fixed", prices).run()
+    assert result.agent_results[0].eth_locked == pytest.approx(0.25)
+    assert result.eth_sale_proceeds == pytest.approx(450)
+    assert result.obligation_uncollected == pytest.approx(50)
+    assert result.interest_used == pytest.approx(50)
+    assert result.principal_loss == 0
+    assert result.interest_distributed == pytest.approx(70)
 
 
 def test_due_date_default_freezes_before_new_contributions():
