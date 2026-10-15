@@ -1,5 +1,6 @@
 import importlib
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -87,3 +88,33 @@ def test_change_during_read_and_stale_member_read_are_rejected(phase_a_copy, mon
         module.load_study(directory)
     with pytest.raises(ValueError, match="changed|reload"):
         module.member_rows(snapshot, (.2, 1., 1, (0,)))
+
+
+def test_filters_aggregate_raw_max_and_counts_with_expected_groups(phase_a_copy):
+    module = reader()
+    study = module.load_study(phase_a_copy[0])
+    rows = tuple(dict(annual_rate=.2, ratio=1., k=k, default_ids=ids,
+                      max_individual_loss=loss, loss_window_count=count,
+                      completed_windows=3, expected_windows=3,
+                      worst_individual_start="2022-01-01")
+                 for k, ids, loss, count in [(1, "0", 5, 2), (2, "0", 7, 1), (2, "1", 1, 0)])
+    study = replace(study, summaries=rows, manifest={**study.manifest, "windows": 3, "planned_ratios": [1.]})
+    filters = module.StudyFilters((.2,), 1., 1., (1, 2), ((1, (0,)), (2, (0,)), (2, (1,))))
+    risk, = module.risk_rows(study, filters)
+    assert (risk["max_individual_loss"], risk["loss_count"]) == (7, 3)
+    assert risk["completed_runs"] == risk["expected_runs"] == 9
+    assert risk["coverage_complete"]
+    assert [r["max_individual_loss"] for r in module.heatmap_rows(study, filters, .2)] == [5, 7]
+    assert module.select_worst(rows) == (.2, 1., 2, (0,))
+    assert module.member_label(0) == "Người 1"
+    assert module.member_label(5) == "Người 6"
+    assert not module.filter_summaries(study, replace(filters, annual_rates=()))
+    assert not module.risk_rows(study, replace(filters, groups=()))
+    missing = replace(study, summaries=())
+    point, = module.risk_rows(missing, filters)
+    assert point["max_individual_loss"] is None and point["loss_count"] is None
+    assert point["completed_runs"] == 0 and point["expected_runs"] == 9
+    assert not point["coverage_complete"]
+    for bad in (replace(filters, min_ratio=float("nan")), replace(filters, max_ratio=.5),
+                replace(filters, groups=((1, (2,)),))):
+        with pytest.raises(ValueError): module.filter_summaries(study, bad)

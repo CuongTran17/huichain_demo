@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from math import isfinite
 
 from rosca_sim import phase_a as pa
 
@@ -113,3 +114,80 @@ def member_rows(study: StudySnapshot, key: CaseKey) -> tuple[dict[str, object], 
         raise ValueError("corrupt member rows") from error
     _assert_current(study)
     return rows
+
+
+@dataclass(frozen=True)
+class StudyFilters:
+    annual_rates: tuple[float, ...]
+    min_ratio: float
+    max_ratio: float
+    paid_counts: tuple[int, ...]
+    groups: tuple[GroupKey, ...]
+
+
+def _groups(filters):
+    if (not isfinite(filters.min_ratio) or not isfinite(filters.max_ratio)
+        or filters.min_ratio > filters.max_ratio):
+        raise ValueError("invalid ratio range")
+    valid = {(c.paid_count, c.default_ids) for c in pa.phase_a_cases()}
+    if (any(rate not in pa.ANNUAL_RATES for rate in filters.annual_rates)
+        or any(k not in range(1, 6) for k in filters.paid_counts)
+        or any(g not in valid for g in filters.groups)):
+        raise ValueError("invalid rate, paid count or group")
+    return tuple(sorted(set(g for g in filters.groups if g[0] in filters.paid_counts)))
+
+
+def filter_summaries(study: StudySnapshot, filters: StudyFilters) -> tuple[dict[str, object], ...]:
+    groups = _groups(filters)
+    return tuple(r for r in study.summaries if r["annual_rate"] in filters.annual_rates
+                 and filters.min_ratio <= r["ratio"] <= filters.max_ratio
+                 and (case_key(r)[2], case_key(r)[3]) in groups)
+
+
+def select_worst(rows: tuple[dict[str, object], ...]) -> CaseKey | None:
+    if not rows:
+        return None
+    return case_key(min(rows, key=lambda r: (-r["max_individual_loss"],
+                                            r["worst_individual_start"], case_key(r))))
+
+
+def member_label(member_id: int) -> str:
+    return f"Người {member_id + 1}"
+
+
+def _aggregate(study, filters, heat_rate=None):
+    groups = _groups(filters)
+    if not groups:
+        return ()
+    selected = filter_summaries(study, filters)
+    index = {case_key(r): r for r in selected}
+    result = []
+    for rate in sorted(set(filters.annual_rates)):
+        if heat_rate is not None and rate != heat_rate:
+            continue
+        for ratio in sorted(study.manifest["planned_ratios"]):
+            if not filters.min_ratio <= ratio <= filters.max_ratio:
+                continue
+            for k in (sorted({g[0] for g in groups}) if heat_rate is not None else (None,)):
+                expected_groups = [g for g in groups if k is None or g[0] == k]
+                found = tuple(index[(rate, ratio, *g)] for g in expected_groups if (rate, ratio, *g) in index)
+                worst = select_worst(found)
+                row = next((r for r in found if case_key(r) == worst), None)
+                completed = sum(r["completed_windows"] for r in found)
+                expected = len(expected_groups) * study.manifest["windows"]
+                result.append(dict(annual_rate=rate, ratio=ratio,
+                    max_individual_loss=row["max_individual_loss"] if row else None,
+                    loss_count=sum(r["loss_window_count"] for r in found) if found else None,
+                    completed_runs=completed, expected_runs=expected, coverage_complete=completed == expected,
+                    group_count=len(expected_groups), worst_key=worst,
+                    worst_start=row["worst_individual_start"] if row else None,
+                    **({"k": k} if k is not None else {})))
+    return tuple(result)
+
+
+def risk_rows(study: StudySnapshot, filters: StudyFilters) -> tuple[dict[str, object], ...]:
+    return _aggregate(study, filters)
+
+
+def heatmap_rows(study: StudySnapshot, filters: StudyFilters, annual_rate: float) -> tuple[dict[str, object], ...]:
+    return _aggregate(study, filters, annual_rate)
