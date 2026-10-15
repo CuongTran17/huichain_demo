@@ -13,6 +13,7 @@ import random
 import shutil
 from statistics import mean
 import tomllib
+from time import perf_counter
 from typing import Sequence
 
 from rosca_sim.auction import (
@@ -317,6 +318,17 @@ def _augment_metadata(config: LoadedConfig, output: Path) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rosca-sim")
     commands = parser.add_subparsers(dest="command", required=True)
+    phase = commands.add_parser("auction-phase-a", help="bounded 2022 annual-bid collateral study")
+    phase.add_argument("--prices", type=Path, required=True)
+    phase.add_argument("--output", type=Path, required=True)
+    phase.add_argument("--source-label", required=True)
+    phase.add_argument("--quote-asset", choices=("USDT",), required=True)
+    modes = phase.add_mutually_exclusive_group()
+    modes.add_argument("--dry-run", action="store_true")
+    modes.add_argument("--aggregate-only", action="store_true")
+    modes.add_argument("--refine", action="store_true")
+    phase.add_argument("--annual-rate", type=float)
+    phase.add_argument("--ratio", type=float)
     auction = commands.add_parser("auction-run", help="run paired auction ROSCA scenarios")
     auction.add_argument("--config", type=Path, required=True)
     auction.add_argument("--output", type=Path, required=True)
@@ -356,6 +368,8 @@ def _dotenv_value(name: str, path: Path = Path(".env")) -> str | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "auction-phase-a":
+        return _run_phase_a(args)
     if args.command in ("auction-run", "auction-grace-sweep"):
         auction_config = load_auction_config(args.config)
         output = Path(args.output)
@@ -446,6 +460,44 @@ def main(argv: Sequence[str] | None = None) -> int:
     _augment_metadata(config, output)
     print(output)
     print(f"runs: {config.experiment.runs}")
+    return 0
+
+
+def _run_phase_a(args) -> int:
+    from rosca_sim.phase_a import (
+        ANNUAL_RATES, COARSE_RATIOS, _validate_selectors, aggregate_phase_a,
+        describe_phase_a, phase_a_paths, plan_phase_a_refinement, prepare_phase_a,
+        run_phase_a_job,
+    )
+    selected = args.annual_rate is not None or args.ratio is not None
+    if selected:
+        if (args.annual_rate is None or args.ratio is None
+            or args.dry_run or args.aggregate_only or args.refine):
+            raise ValueError("supply both --annual-rate and --ratio, without another mode")
+        _validate_selectors(args.annual_rate, args.ratio)
+    if not args.source_label.strip():
+        raise ValueError("source label must not be empty")
+    started = perf_counter()
+    # Hash the same local bytes from which paths are loaded; never fetch or normalize here.
+    before = hashlib.sha256(args.prices.read_bytes()).hexdigest()
+    paths = phase_a_paths(load_price_csv(args.prices, date(2022, 1, 1), date(2022, 12, 31)))
+    if before != hashlib.sha256(args.prices.read_bytes()).hexdigest():
+        raise ValueError("price CSV changed while loading")
+    provenance = {"source_label": args.source_label, "quote_asset": args.quote_asset,
+                  "price_csv_sha256": before}
+    if args.dry_run:
+        print(json.dumps(describe_phase_a(paths, provenance), indent=2))
+        return 0
+    fingerprint = prepare_phase_a(paths, args.output, provenance)
+    if not args.aggregate_only:
+        ratios = plan_phase_a_refinement(args.output) if args.refine else COARSE_RATIOS
+        jobs = ((args.annual_rate, args.ratio),) if selected else (
+            (rate, ratio) for rate in ANNUAL_RATES for ratio in ratios)
+        for rate, ratio in jobs:
+            target = run_phase_a_job(paths, rate, ratio, args.output, fingerprint)
+            print(f"completed/reused: {target.name}", flush=True)
+    rows = aggregate_phase_a(args.output)
+    print(json.dumps({"global": rows[-1], "wall_seconds": perf_counter() - started}))
     return 0
 
 

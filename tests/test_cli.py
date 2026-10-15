@@ -81,6 +81,18 @@ def test_auction_rejects_legacy_gross_discount_toml(tmp_path):
         cli.load_auction_config(write_config(tmp_path, old))
 
 
+def test_phase_a_dry_run_counts_2022_without_outputs(tmp_path, capsys):
+    prices = tmp_path / "prices.csv"
+    prices.write_text("date,close\n" + "".join(
+        f"{date(2022, 1, 1) + timedelta(days=i)},2000\n" for i in range(365)), encoding="utf-8")
+    output = tmp_path / "study"
+    assert main(["auction-phase-a", "--prices", str(prices), "--output", str(output),
+                 "--source-label", "synthetic test", "--quote-asset", "USDT", "--dry-run"]) == 0
+    text = capsys.readouterr().out
+    assert "474240" in text and "208" in text
+    assert not output.exists()
+
+
 @pytest.mark.parametrize("old,new,match", [
     ("reserve_initial = 0.0", "reserve_initial = 1.0", "reserve_initial"),
     ("grace_days = 7", "grace_days = -1", "grace_days"),
@@ -337,6 +349,20 @@ def test_sweep_rejects_invalid_or_duplicate_ratios(tmp_path, ratios):
     config_path = write_config(tmp_path, valid_toml())
     with pytest.raises(ValueError, match="ratios"):
         main(["sweep", "--config", str(config_path), "--output", str(tmp_path / "frontier"), "--ratios", *ratios])
+
+
+@pytest.mark.parametrize("extra", [
+    ["--annual-rate", ".2"], ["--ratio", "1"],
+    ["--annual-rate", ".2", "--ratio", "1", "--dry-run"],
+    ["--annual-rate", ".21", "--ratio", "1"],
+    ["--annual-rate", ".2", "--ratio", ".51"],
+])
+def test_phase_a_rejects_bad_selectors_before_loading_or_writing(tmp_path, extra):
+    output = tmp_path / "study"
+    with pytest.raises(ValueError):
+        main(["auction-phase-a", "--prices", str(tmp_path / "missing.csv"), "--output", str(output),
+              "--source-label", "test", "--quote-asset", "USDT", *extra])
+    assert not output.exists()
 
 
 def test_sweep_rejects_stress_coverage_floor_that_would_hide_ratio_changes(tmp_path):
