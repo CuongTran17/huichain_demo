@@ -33,6 +33,15 @@ def test_chart_rows_reconcile_to_engine():
     assert next(row for row in trace if row["period"] == 0 and row["member_id"] == 0)["payout_usdc"] == 480.0
     assert trace[0]["retained_interest_usdc"] == 120.0
     assert trace[0]["contribution_usdc"] == 100.0
+    assert rows[0]["bid_interest_paid_usdc"] == 120
+    assert not rows[0]["is_trigger_default"]
+    assert not rows[0]["settlement_shortfall"]
+    summary, = reporting().comparison_rows((run,))
+    assert summary["collateral_release_policy"] == "terminal"
+    assert summary["interest_used_from_defaulting_usdc"] == 0
+    assert summary["interest_used_from_other_members_usdc"] == 0
+    assert summary["secondary_shortfall_count"] == 0
+    assert summary["liquidation_slippage"] == 0
 
 
 def test_locked_value_has_quote_proxy_label():

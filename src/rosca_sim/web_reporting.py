@@ -22,6 +22,7 @@ def _meta(run: CaseRun | SweepRun) -> dict[str, object]:
         "quote_asset": run.quote_asset,
         "proxy_assumption": f"1 {run.quote_asset} ≈ 1 USDC; ETH close is not an executable fill",
         "behavior_assumption": "Researcher-supplied bids/defaults; no strategic adaptation",
+        "collateral_release_policy": "terminal",
     }
 
 
@@ -35,12 +36,17 @@ def comparison_rows(runs: tuple[CaseRun, ...]) -> tuple[dict[str, object], ...]:
     return tuple({
         **_meta(run), "case_id": run.case.case_id, "case_name": run.case.name,
         "ratio": run.case.scenario.collateral.fixed_ratio,
+        "liquidation_slippage": run.case.scenario.collateral.liquidation_slippage,
         "principal_loss_usdc": run.result.principal_loss,
         "worst_member_loss_usdc": run.result.worst_member_loss,
         "stop_reason": run.result.stop_reason, "default_count": run.result.default_count,
         "freeze_day": run.result.freeze_day, "settlement_day": run.result.settlement_day,
         "interest_retained_usdc": run.result.interest_retained,
         "interest_used_usdc": run.result.interest_used,
+        "interest_used_from_defaulting_usdc": run.result.interest_used_from_defaulting,
+        "interest_used_from_other_members_usdc": run.result.interest_used_from_other_members,
+        "secondary_shortfall_count": run.result.secondary_shortfall_count,
+        "obligation_uncollected_usdc": run.result.obligation_uncollected,
         "interest_distributed_usdc": run.result.interest_distributed,
         "payout_order": ", ".join(map(str, run.result.payout_order)),
     } for run in runs)
@@ -54,6 +60,9 @@ def member_loss_rows(runs: tuple[CaseRun, ...]) -> tuple[dict[str, object], ...]
         "contributed_usdc": member.total_contributed,
         "net_payout_usdc": member.net_payout,
         "interest_received_usdc": member.interest_received,
+        "bid_interest_paid_usdc": member.bid_interest_paid,
+        "is_trigger_default": member.is_trigger_default,
+        "settlement_shortfall": member.settlement_shortfall,
         "eth_locked": member.eth_locked, "eth_released": member.eth_released,
         "eth_sold": member.eth_sold, "eth_returned": member.eth_returned,
         "principal_claim_usdc": member.principal_claim,

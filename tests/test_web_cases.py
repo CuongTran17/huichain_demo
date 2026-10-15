@@ -72,3 +72,20 @@ def test_case_import_rejects_nonfinite_and_unknown_fields():
     bad["cases"][0]["secret_override"] = True
     with pytest.raises(ValueError, match="unknown"):
         module.load_cases_json(json.dumps(bad))
+
+
+@pytest.mark.parametrize("value", [True, -0.01, 1.0, float("nan"), float("inf")])
+def test_import_rejects_invalid_sale_slippage(value):
+    module = cases_module()
+    raw = json.loads(module.dump_cases_json((module.example_case(),)))
+    raw["cases"][0]["scenario"]["collateral"]["liquidation_slippage"] = value
+    with pytest.raises(ValueError):
+        module.load_cases_json(json.dumps(raw))
+
+
+def test_historical_web_keeps_rejecting_stress_floor():
+    module = cases_module()
+    raw = json.loads(module.dump_cases_json((module.example_case(),)))
+    raw["cases"][0]["scenario"]["collateral"]["stress_drop"] = 0.4
+    with pytest.raises(ValueError, match="stress_drop"):
+        module.load_cases_json(json.dumps(raw))

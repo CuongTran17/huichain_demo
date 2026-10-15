@@ -152,6 +152,12 @@ if view == "Quét tự động và tìm ngưỡng":
             y=alt.Y("loss_run_share:Q", axis=alt.Axis(format="%"), title="Tỷ lệ lượt bị lỗ gốc"),
             color="case_id:N", tooltip=["case_id", "ratio", "loss_run_count", "runs", "loss_run_share"]),
             width="stretch")
+        st.altair_chart(alt.Chart(pd.DataFrame(rows)).mark_line(point=True).encode(
+            x=alt.X("ratio:Q", title="Tỷ lệ ký quỹ / nghĩa vụ còn lại"),
+            y=alt.Y("completion_share:Q", axis=alt.Axis(format="%"), title="Tỷ lệ dây hoàn thành"),
+            color="case_id:N", tooltip=["case_id", "ratio", "completed_run_count", "runs",
+                                        "completion_share", "mean_payout_count", "no_eligible_bid_count"]),
+            width="stretch")
         st.altair_chart(alt.Chart(pd.DataFrame(rows)).mark_circle(size=120).encode(
             x=alt.X("median_max_member_lock_usdc_proxy:Q", title="ETH khóa lớn nhất, trung vị (USDC giả định)"),
             y=alt.Y("worst_member_loss_usdc:Q", title="Lỗ gốc lớn nhất một người (USDC)"),
@@ -170,26 +176,33 @@ if view == "Quét tự động và tìm ngưỡng":
             for case in st.session_state.sweep_cases_snapshot:
                 candidate = candidate_ratio(rows, case.case_id)
                 if candidate is None:
-                    st.markdown(f"**{case.name} ({case.case_id}):** Không có ngưỡng thử nào không lỗ gốc trong mẫu này.")
+                    st.markdown(f"**{case.name} ({case.case_id}):** Không có ngưỡng thử nào vừa không lỗ gốc "
+                                "vừa không dừng vì thiếu người đủ điều kiện lĩnh trong mẫu này.")
                 else:
                     st.markdown(f"**{case.name} ({case.case_id}):** Ngưỡng ứng viên thấp nhất đã thử: {candidate:.2f} "
-                                "(không lỗ gốc trong các cửa sổ được chọn, không bảo đảm tương lai).")
+                                "(không lỗ gốc và không dừng vì thiếu người đủ điều kiện lĩnh trong mẫu, không bảo đảm tương lai).")
         if any(row["changed_order_count"] for row in rows):
             st.markdown("**Thứ tự lĩnh thay đổi:** người chào lãi cao có thể thiếu ETH ở tỷ lệ cao hơn; "
                         "so sánh lỗ không đồng nghĩa chỉ đổi mức bảo vệ.")
         if any(row["no_eligible_bid_count"] for row in rows):
-            st.warning("Có lượt không ai đủ ETH để lĩnh. Những lượt đó không được tính là ngưỡng ứng viên, dù lỗ gốc bằng 0.")
+            st.warning("Có lượt không có người chào lãi đủ điều kiện lĩnh: thiếu ETH hoặc không có bid hợp lệ. "
+                       "Những lượt đó không được tính là ngưỡng ứng viên, dù lỗ gốc bằng 0.")
         if any(row["nonmonotonic"] for row in rows):
             st.warning("Có chỉ tiêu rủi ro tăng ở tỷ lệ ký quỹ cao hơn: " + ", ".join(sorted({
                 metric for row in rows for metric in row["nonmonotonic_metrics"].split(", ") if metric
             })) + ". Không thể kết luận cứ tăng ký quỹ sẽ an toàn hơn.")
-        st.caption("Ngưỡng chỉ là kết quả thực nghiệm trong lưới tỷ lệ và lịch sử đã chọn, không bao gồm cú râu nến, trượt giá, thất bại thanh lý hay thông đồng.")
+        st.caption("Ngưỡng chỉ là kết quả trong mẫu. Tần suất lỗ không phải xác suất mất tiền thực tế. "
+                   "Trượt giá chỉ theo tham số giả định; chưa mô phỏng râu nến, thất bại thanh lý hay thông đồng. "
+                   "Tỷ lệ hoàn thành và số lượt lĩnh là chỉ báo hoạt động, không phải điều kiện bắt buộc của kịch bản cố ý cho bùng.")
     else:
-        st.info("Chọn dây, lưới ký quỹ và số cửa sổ, rồi bấm Quét tỷ lệ để xem phân bố lỗ và chi phí khóa ETH.")
+        st.info("Chọn dây, lưới ký quỹ và số cửa sổ, rồi bấm Quét tỷ lệ để xem phân bố lỗ và lượng ETH khóa lúc lĩnh.")
     st.stop()
 
 st.subheader("So sánh kịch bản")
 st.caption("Một người chỉ ký quỹ khi lĩnh hụi. Lãi chào thắng bị khấu trừ ngay, giữ trong quỹ; các kỳ sau người đó vẫn chỉ góp đúng khoản cố định.")
+st.caption("ETH giữ nguyên lượng đến khi hoàn thành hoặc quyết toán, không trả dần mỗi kỳ. "
+           "Giả định góp đủ trừ sự kiện đặt trước; khả năng nộp USDC chỉ dùng lúc quyết toán. "
+           "Web lịch sử không nhận stress_drop hay giá bán ghi đè qua JSON.")
 
 cases = st.session_state.cases
 if cases:
@@ -250,6 +263,11 @@ if cases:
             ratio = d.number_input("Tỷ lệ ký quỹ / nghĩa vụ còn lại", min_value=0.0,
                                    value=float(case.scenario.collateral.fixed_ratio), step=0.1)
             grace = e.number_input("Ân hạn quyết toán (ngày)", 0, 365, case.scenario.grace_days)
+            slippage_percent = st.number_input("Trượt giá khi bán ETH (%)", min_value=0.0,
+                value=100 * float(case.scenario.collateral.liquidation_slippage), step=1.0,
+                format="%.5f")
+            st.caption("Giá bán mô phỏng = giá đóng cửa ngày bán × (1 − trượt giá). "
+                       "Mặc định 0%; thử 5% hoặc 10% là phân tích độ nhạy, không phải giá khớp lệnh đo được.")
             st.caption("Tỷ lệ 1,5 nghĩa là khóa ETH trị giá 150% phần góp cố định còn lại; không phải 150% khoản lĩnh ròng.")
             agent_rows = st.data_editor([asdict(agent) for agent in case.scenario.agents],
                                         key="agent_editor", num_rows="dynamic", hide_index=True)
@@ -275,7 +293,8 @@ if cases:
                 scenario = replace(case.scenario,
                     rosca=replace(case.scenario.rosca, members=int(members), periods=int(members),
                                   contribution=float(contribution), period_days=int(period_days)),
-                    collateral=replace(case.scenario.collateral, fixed_ratio=float(ratio)),
+                    collateral=replace(case.scenario.collateral, fixed_ratio=float(ratio),
+                                       liquidation_slippage=float(slippage_percent) / 100),
                     agents=agents, bids=bids,
                     forced_defaults=tuple(AuctionEvent(**item) for item in json.loads(defaults)),
                     missed_contributions=tuple(AuctionEvent(**item) for item in json.loads(missed)),
@@ -349,18 +368,26 @@ if runs:
     selected = st.selectbox("Mở chi tiết dây", run_labels)
     run = runs[run_labels.index(selected)]
     result = run.result
+    stop_label = {"completed": "Hoàn thành", "default": "Dừng do bùng hoặc bỏ góp",
+                  "no_eligible_bid": "Không có người chào lãi đủ điều kiện lĩnh"}.get(
+                      result.stop_reason, result.stop_reason)
     st.subheader(f"Diễn biến: {run.case.name}")
     if run.trace:
         st.markdown(f"Lĩnh kỳ đầu **{run.trace[0].net_payout:,.0f} USDC**, lãi giữ quỹ **{run.trace[0].bid_interest:,.0f} USDC**. "
-                    f"Thứ tự lĩnh: {result.payout_order}. Dừng: {result.stop_reason}, ngày {result.freeze_day}; "
+                    f"Thứ tự lĩnh: {result.payout_order}. {stop_label} ({result.stop_reason}), ngày {result.freeze_day}; "
                     f"quyết toán ngày {result.settlement_day}.")
     else:
         st.markdown(f"**Chưa có kỳ góp hoặc lĩnh nào.** Dây dừng ngày {result.freeze_day} "
-                    f"({result.stop_reason}); quyết toán ngày {result.settlement_day}.")
+                    f"({stop_label}; {result.stop_reason}); quyết toán ngày {result.settlement_day}.")
     st.caption(f"Lãi đã giữ từ lúc lĩnh {result.interest_retained:,.2f} USDC · "
                f"trong đó dùng bù gốc {result.interest_used:,.2f} USDC · "
                f"tổng tiền chia lại {result.interest_distributed:,.2f} USDC · "
                f"tiền mặt còn trong quỹ sau quyết toán {result.ending_cash:,.2f} USDC")
+    st.caption(f"Lãi nhóm gây dừng dùng bù gốc {result.interest_used_from_defaulting:,.2f} USDC · "
+               f"lãi nhóm còn lại dùng bù {result.interest_used_from_other_members:,.2f} USDC · "
+               f"nghĩa vụ chưa thu {result.obligation_uncollected:,.2f} USDC. Quỹ bù gốc không xóa nghĩa vụ này.")
+    st.caption(f"{result.default_count} người gây đóng băng · {result.secondary_shortfall_count} người khác "
+               "còn thiếu nghĩa vụ sau quyết toán. Hai nhóm không đồng nghĩa với nhau.")
     price_rows = [{"date": (run.case.window_start + timedelta(days=i)).isoformat(),
                    "close": price} for i, price in enumerate(run.price_path.daily_prices)]
     event_rows = [{"date": (run.case.window_start + timedelta(days=member.payout_day)).isoformat(),
@@ -399,6 +426,16 @@ if runs:
                                        color=alt.Color("member_id:N", title="Người chơi"),
                                        strokeDash=alt.StrokeDash("Chỉ tiêu:N")), width="stretch")
         st.dataframe(list(trace), hide_index=True, width="stretch")
+        st.altair_chart(alt.Chart(pd.DataFrame(trace)).mark_point().encode(
+            x=alt.X("day:Q", title="Ngày trong dây"),
+            y=alt.Y("coverage_ratio:Q", title="Giá trị ETH đang khóa / nghĩa vụ còn lại"),
+            color=alt.Color("member_id:N", title="Người chơi"),
+            tooltip=["member_id", "day", "retained_eth", "remaining_obligation_usdc",
+                     "coverage_ratio", "collateral_shortfall_usdc", "skipped_for_insufficient_eth"]),
+            width="stretch")
+        st.caption("Chỉ báo ký quỹ tại các kỳ đã chạy, sau góp và lĩnh nhưng trước quyết toán; "
+                   "không gọi nạp thêm hay tự thanh lý. Nghĩa vụ bằng 0 thì tỷ lệ không áp dụng. "
+                   "ETH khóa mới mỗi kỳ khác với ETH còn giữ; không nội suy trạng thái giữa các kỳ.")
     else:
         st.info("Chưa có kỳ nào để vẽ dòng tiền trong dây.")
     member_rows = tuple(row for row in losses if row["case_id"] == run.case.case_id)

@@ -1,11 +1,12 @@
 from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
+import pytest
 
 from streamlit.testing.v1 import AppTest
 
 from rosca_sim.auction import AuctionEvent
-from rosca_sim.web_cases import dump_cases_json, example_case
+from rosca_sim.web_cases import dump_cases_json, example_case, load_cases_json
 
 
 APP = Path(__file__).resolve().parents[1] / "src" / "rosca_sim" / "web_app.py"
@@ -197,3 +198,54 @@ def test_sweep_shows_loss_frequency_and_collateral_tradeoff_charts(tmp_path):
     at.button(key="run_sweep").click().run()
     assert not at.exception
     assert len(at.get("vega_lite_chart")) >= 4
+
+
+@pytest.mark.parametrize("percent", [0.0, 5.0, 10.0, 99.999])
+def test_slippage_editor_preserves_percent_units_and_roundtrip(percent):
+    at = app()
+    control = next(item for item in at.number_input if item.label == "Trượt giá khi bán ETH (%)")
+    control.set_value(percent)
+    next(button for button in at.button if button.label == "Lưu điều kiện dây").click().run()
+    assert not at.exception
+    case = at.session_state["cases"][0]
+    assert case.scenario.collateral.liquidation_slippage == pytest.approx(percent / 100)
+    assert load_cases_json(dump_cases_json((case,))) == (case,)
+
+
+def test_slippage_edit_marks_manual_and_sweep_results_stale(tmp_path):
+    at = app()
+    at.session_state["cases"] = (replace(example_case(), window_start=date(2022, 1, 1)),)
+    at.text_input(key="csv_path").set_value(str(price_csv(tmp_path))).run()
+    at.button(key="run_cases").click().run()
+    at.radio(key="view").set_value("Quét tự động và tìm ngưỡng").run()
+    at.button(key="run_sweep").click().run()
+    at.radio(key="view").set_value("So sánh kịch bản").run()
+    next(item for item in at.number_input if item.label == "Trượt giá khi bán ETH (%)").set_value(10.0)
+    next(button for button in at.button if button.label == "Lưu điều kiện dây").click().run()
+    assert any("cũ" in item.value for item in at.warning)
+    at.radio(key="view").set_value("Quét tự động và tìm ngưỡng").run()
+    assert any("cũ" in item.value for item in at.warning)
+    assert any("ẩn" in item.value for item in at.info)
+
+
+def test_slippage_100_percent_is_inline_error_without_overwriting_case():
+    at = app()
+    next(item for item in at.number_input if item.label == "Trượt giá khi bán ETH (%)").set_value(100.0)
+    next(button for button in at.button if button.label == "Lưu điều kiện dây").click().run()
+    assert at.error and not at.exception
+    assert at.session_state["cases"][0].scenario.collateral.liquidation_slippage == 0
+
+
+def test_settlement_and_coverage_are_visible_without_margin_calls(tmp_path):
+    at = app()
+    at.session_state["cases"] = (replace(example_case(), window_start=date(2022, 1, 1)),)
+    at.text_input(key="csv_path").set_value(str(price_csv(tmp_path))).run()
+    at.button(key="run_cases").click().run()
+    assert not at.exception
+    tables = [item.value for item in at.dataframe]
+    assert any("bid_interest_paid_usdc" in table.columns for table in tables)
+    assert any("interest_used_from_defaulting_usdc" in table.columns for table in tables)
+    assert any("coverage_ratio" in table.columns for table in tables)
+    assert any("chỉ báo" in item.value.casefold() for item in at.caption)
+    assert any("Hoàn thành" in item.value for item in at.markdown)
+    assert not any("Nạp thêm" in item.label for item in at.button)
