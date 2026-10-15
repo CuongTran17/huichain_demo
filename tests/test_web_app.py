@@ -30,6 +30,7 @@ def test_app_starts_with_example():
     assert not at.exception
     assert len(at.session_state["cases"][0].scenario.agents) == 6
     assert any("6 người" in item.value for item in at.markdown)
+    assert any("20%/năm" in item.value for item in at.caption)
 
 
 def test_case_editor_clone_import_and_remove():
@@ -60,7 +61,7 @@ def test_run_shows_charts_and_discount(tmp_path):
     at.button(key="run_cases").click().run()
     assert not at.exception
     assert len(at.get("vega_lite_chart")) >= 3
-    assert any("480" in item.value and "120" in item.value for item in at.markdown)
+    assert any("559" in item.value and "41" in item.value for item in at.markdown)
     assert at.session_state["manual_runs"][0].trace[1].contributions_by_member[0] == 100
 
 
@@ -86,8 +87,8 @@ def test_interest_caption_distinguishes_retained_from_remaining(tmp_path):
     at.text_input(key="csv_path").set_value(str(price_csv(tmp_path))).run()
     at.button(key="run_cases").click().run()
     result = at.session_state["manual_runs"][0].result
-    assert result.interest_retained == 120
-    assert result.interest_used == 120
+    assert result.interest_retained == pytest.approx(41.0958904109589)
+    assert result.interest_used == pytest.approx(41.0958904109589)
     assert any("đã giữ từ lúc lĩnh" in item.value.casefold() for item in at.caption)
     assert not any("lãi còn quỹ 120" in item.value.casefold() for item in at.caption)
 

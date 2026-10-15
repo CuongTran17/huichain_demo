@@ -10,7 +10,7 @@ from statistics import mean
 from typing import Callable
 
 from rosca_sim import __version__
-from rosca_sim.auction import AuctionRoscaModel, AuctionRunResult, AuctionScenario
+from rosca_sim.auction import ANNUAL_BID_METADATA, AuctionRoscaModel, AuctionRunResult, AuctionScenario
 from rosca_sim.prices import PricePath
 
 
@@ -80,6 +80,7 @@ def run_auction_experiment(
     _write_csv(output_dir / "auction_agent_results.csv", agent_rows)
     _write_csv(output_dir / "auction_pair_results.csv", pair_rows)
     metadata = {
+        **ANNUAL_BID_METADATA,
         "model_kind": "auction_stop",
         "program_version": __version__,
         "runs": runs,

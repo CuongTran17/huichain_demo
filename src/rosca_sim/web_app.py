@@ -200,6 +200,9 @@ if view == "Quét tự động và tìm ngưỡng":
 
 st.subheader("So sánh kịch bản")
 st.caption("Một người chỉ ký quỹ khi lĩnh hụi. Lãi chào thắng bị khấu trừ ngay, giữ trong quỹ; các kỳ sau người đó vẫn chỉ góp đúng khoản cố định.")
+st.caption("Chào lãi tối đa 20%/năm: annual_rate=0.20 nghĩa là 20%/năm, không phải 20% quỹ lĩnh. "
+           "Lãi đơn = nghĩa vụ góp còn lại × lãi suất năm × ngày còn lại / 365. "
+           "Đây là quy ước nghiên cứu, chưa phải xác nhận tuân thủ pháp luật; JSON cũ schema 1 không được nhập lại như schema 2.")
 st.caption("ETH giữ nguyên lượng đến khi hoàn thành hoặc quyết toán, không trả dần mỗi kỳ. "
            "Giả định góp đủ trừ sự kiện đặt trước; khả năng nộp USDC chỉ dùng lúc quyết toán. "
            "Web lịch sử không nhận stress_drop hay giá bán ghi đè qua JSON.")
@@ -273,8 +276,10 @@ if cases:
                                         key="agent_editor", num_rows="dynamic", hide_index=True)
             st.caption("Mỗi hàng người chơi: ETH sẵn có, khả năng nộp USDC, cách quyết toán và ngày thanh toán.")
             bid_rows = st.data_editor([asdict(bid) for bid in case.scenario.bids],
-                                      key="bid_editor", num_rows="dynamic", hide_index=True)
-            st.caption("Mỗi hàng chào lãi: kỳ, ID người chơi, tỷ lệ lãi. Người đã lĩnh không chào tiếp.")
+                                      key="bid_editor", num_rows="dynamic", hide_index=True,
+                                      column_config={"annual_rate": st.column_config.NumberColumn(
+                                          "Lãi suất năm (tỷ lệ)", min_value=0.0, max_value=0.20, step=0.01)})
+            st.caption("Mỗi hàng chào lãi: kỳ, ID người chơi, annual_rate từ 0 đến 0.20. Người đã lĩnh không chào tiếp.")
             defaults = st.text_area("Người đã lĩnh bùng: JSON sự kiện", value=json.dumps(
                 [asdict(item) for item in case.scenario.forced_defaults], ensure_ascii=False))
             missed = st.text_area("Người chưa lĩnh bỏ góp: JSON sự kiện", value=json.dumps(

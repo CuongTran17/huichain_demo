@@ -14,8 +14,9 @@ def test_example_has_first_bid():
     case = cases_module().example_case()
     assert case.scenario.rosca.members == 6
     assert case.scenario.rosca.periods == 6
-    assert case.scenario.bids[0].rate == 0.2
+    assert case.scenario.bids[0].annual_rate == 0.2
     assert case.scenario.agents[0].settlement_mode == "usdc_first"
+    assert json.loads(cases_module().dump_cases_json((case,)))["schema_version"] == 2
 
 
 def test_named_case_roundtrip():
@@ -36,7 +37,7 @@ def test_case_import_rejects_unsafe_data():
         module.load_cases_json(json.dumps(bad))
 
     bad = json.loads(json.dumps(original))
-    bad["schema_version"] = 2
+    bad["schema_version"] = 1
     with pytest.raises(ValueError, match="schema"):
         module.load_cases_json(json.dumps(bad))
 
@@ -46,7 +47,7 @@ def test_case_import_rejects_unsafe_data():
         module.load_cases_json(json.dumps(bad))
 
     bad = json.loads(json.dumps(original))
-    bad["cases"][0]["scenario"]["bids"][0]["rate"] = 1.0
+    bad["cases"][0]["scenario"]["bids"][0]["annual_rate"] = 1.0
     with pytest.raises(ValueError, match="bid rate"):
         module.load_cases_json(json.dumps(bad))
 

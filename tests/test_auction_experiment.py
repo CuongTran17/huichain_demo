@@ -37,7 +37,7 @@ def test_experiment_outputs_are_distinct_and_reproducible(tmp_path):
     assert all((a / name).read_bytes() == (b / name).read_bytes() for name in names)
     with (a / "auction_agent_results.csv").open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
-    assert {"net_payout", "winning_bid", "eth_sold", "eth_returned", "principal_claim", "principal_loss", "interest_received"} <= set(rows[0])
+    assert {"net_payout", "winning_annual_rate", "eth_sold", "eth_returned", "principal_claim", "principal_loss", "interest_received"} <= set(rows[0])
     assert not (a / "run_results.csv").exists()
     assert {"bid_interest_paid", "is_trigger_default", "settlement_shortfall"} <= set(rows[0])
     metadata = json.loads((a / "auction_metadata.json").read_text(encoding="utf-8"))

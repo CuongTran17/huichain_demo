@@ -7,6 +7,7 @@ from dataclasses import asdict, replace
 from datetime import timedelta
 import json
 from statistics import mean, median
+from rosca_sim.auction import ANNUAL_BID_METADATA
 
 from rosca_sim.web_analysis import CaseRun, SweepRun
 from rosca_sim.web_cases import NamedCase
@@ -16,6 +17,7 @@ def _meta(run: CaseRun | SweepRun) -> dict[str, object]:
     start = run.case.window_start if isinstance(run, CaseRun) else run.start
     assert start is not None
     return {
+        **ANNUAL_BID_METADATA,
         "start_date": start.isoformat(),
         "end_date": (start + timedelta(days=len(run.price_path.daily_prices) - 1)).isoformat(),
         "source_label": run.source_label,

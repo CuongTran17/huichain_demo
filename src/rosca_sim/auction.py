@@ -31,7 +31,26 @@ class AuctionAgentSeed:
 class AuctionBid:
     period: int
     member_id: int
-    rate: float
+    annual_rate: float
+
+
+ANNUAL_BID_METADATA = {
+    "bid_rate_basis": "annual_simple_act365", "annual_rate_cap": 0.20,
+    "day_count_basis": 365, "result_schema_version": 2,
+}
+
+
+def annual_bid_interest(obligation: float, annual_rate: float, remaining_days: int) -> float:
+    if (type(annual_rate) not in (int, float) or not isfinite(annual_rate)
+        or not 0 <= annual_rate <= 0.20):
+        raise ValueError("annual bid rate must be finite and in [0, 0.20]")
+    if (type(obligation) not in (int, float) or not isfinite(obligation) or obligation < 0
+        or type(remaining_days) is not int or remaining_days < 0):
+        raise ValueError("invalid annual interest obligation or remaining days")
+    amount = obligation * annual_rate * remaining_days / 365
+    if not isfinite(amount):
+        raise ValueError("annual interest must be finite")
+    return amount
 
 
 @dataclass(frozen=True)
@@ -63,7 +82,7 @@ class AuctionScenario:
 class AuctionAgentResult:
     member_id: int
     payout_day: int | None
-    winning_bid: float | None
+    winning_annual_rate: float | None
     net_payout: float
     total_contributed: float
     principal_claim: float
@@ -143,7 +162,7 @@ class AuctionAgent(Agent):
         self.pre_payout_contributions: list[tuple[int, float]] = []
         self.net_payout = 0.0
         self.payout_day: int | None = None
-        self.winning_bid: float | None = None
+        self.winning_annual_rate: float | None = None
         self.bid_interest_paid = 0.0
         self.remaining_obligation = 0.0
         self.initial_obligation = 0.0
@@ -241,8 +260,7 @@ class AuctionRoscaModel(Model):
         seen_bids: set[tuple[int, int]] = set()
         self.bids_by_period: dict[int, list[AuctionBid]] = {}
         for bid in scenario.bids:
-            if type(bid.rate) not in (int, float) or not isfinite(bid.rate) or not 0 <= bid.rate < 1:
-                raise ValueError("bid rate must be finite and in [0, 1)")
+            annual_bid_interest(0, bid.annual_rate, 0)
             if type(bid.period) is not int or type(bid.member_id) is not int or not 0 <= bid.period < rosca.periods or bid.member_id not in ids:
                 raise ValueError("invalid auction bid target")
             key = (bid.period, bid.member_id)
@@ -349,13 +367,12 @@ class AuctionRoscaModel(Model):
             for a in (self.agents_by_id[i] for i in range(rosca.members))
         )
         price = self.price_path.prices[self.period]
-        self.cash_balance += sum(agent.contribute(day) for agent in self.agents_by_id.values())
         candidates = sorted(
             self.bids_by_period.get(self.period, ()),
-            key=lambda bid: (-bid.rate, bid.member_id),
+            key=lambda bid: (-bid.annual_rate, bid.member_id),
         )
         winner: AuctionAgent | None = None
-        winning_bid: AuctionBid | None = None
+        winning_annual_rate: AuctionBid | None = None
         required_eth = 0.0
         insufficient_eth_ids: list[int] = []
         for bid in candidates:
@@ -364,14 +381,22 @@ class AuctionRoscaModel(Model):
                 continue
             needed = self._required_eth(agent, self.period, price)
             if agent.available_eth + 1e-9 >= needed:
-                winner, winning_bid, required_eth = agent, bid, needed
+                winner, winning_annual_rate, required_eth = agent, bid, needed
                 break
             insufficient_eth_ids.append(agent.member_id)
-        if winner is None or winning_bid is None:
+        if winner is None or winning_annual_rate is None:
+            self.cash_balance += sum(agent.contribute(day) for agent in self.agents_by_id.values())
             self.stop_reason = "no_eligible_bid"
             self.freeze_day = day
             self._record_period(period, day, before, None, 0.0, 0.0, tuple(insufficient_eth_ids))
             return
+        gross = rosca.members * rosca.contribution
+        obligation = rosca.contribution * (rosca.periods - self.period - 1)
+        remaining_days = (rosca.periods - self.period - 1) * rosca.period_days
+        discount = annual_bid_interest(obligation, winning_annual_rate.annual_rate, remaining_days)
+        if discount >= gross:
+            raise ValueError("annual interest must be less than gross pot")
+        self.cash_balance += sum(agent.contribute(day) for agent in self.agents_by_id.values())
         winner.available_eth -= required_eth
         winner.locked_eth = required_eth
         winner.initial_locked_eth = required_eth
@@ -379,9 +404,7 @@ class AuctionRoscaModel(Model):
         self.total_collateral_locked += required_eth
         winner.remaining_obligation = winner.initial_obligation
         winner.payout_day = day
-        winner.winning_bid = winning_bid.rate
-        gross = rosca.members * rosca.contribution
-        discount = gross * winning_bid.rate
+        winner.winning_annual_rate = winning_annual_rate.annual_rate
         winner.bid_interest_paid = discount
         winner.net_payout = gross - discount
         self.cash_balance -= winner.net_payout
@@ -494,7 +517,7 @@ class AuctionRoscaModel(Model):
             self.cash_balance -= interest_distributed
         results = tuple(
             AuctionAgentResult(
-                member_id=a.member_id, payout_day=a.payout_day, winning_bid=a.winning_bid,
+                member_id=a.member_id, payout_day=a.payout_day, winning_annual_rate=a.winning_annual_rate,
                 net_payout=a.net_payout, total_contributed=a.total_contributed,
                 principal_claim=claims.get(a.member_id, 0.0), principal_repaid=a.principal_repaid,
                 principal_loss=max(0.0, claims.get(a.member_id, 0.0) - a.principal_repaid),

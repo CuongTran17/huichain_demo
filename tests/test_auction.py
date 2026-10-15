@@ -26,17 +26,56 @@ def constant_prices():
     return PricePath((1.0,) * 6, "constant", None, (1.0,) * 158)
 
 
+@pytest.mark.parametrize("obligation,rate,days,expected", [
+    (500, 0.2, 150, 41.0958904109589),
+    (400, 0.2, 120, 26.3013698630137),
+    (0, 0.2, 0, 0), (500, 0, 150, 0),
+])
+def test_annual_bid_interest_uses_remaining_days(obligation, rate, days, expected):
+    import rosca_sim.auction as auction
+    assert auction.annual_bid_interest(obligation, rate, days) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("rate", [True, -0.01, 0.20001, math.nan, math.inf])
+def test_annual_bid_rejects_invalid_rate(rate):
+    import rosca_sim.auction as auction
+    with pytest.raises(ValueError, match="annual"):
+        auction.annual_bid_interest(500, rate, 150)
+
+
+def test_annual_completion_and_first_payout():
+    case = scenario([(i, i, 0.2) for i in range(6)])
+    model = AuctionRoscaModel(case, "fixed", constant_prices())
+    result = model.run()
+    assert result.agent_results[0].net_payout == pytest.approx(558.9041095890411)
+    assert result.agent_results[0].winning_annual_rate == 0.2
+    assert result.interest_retained == pytest.approx(90.4109589041096)
+    assert result.interest_distributed == pytest.approx(90.4109589041096)
+    assert result.agent_results[-1].bid_interest_paid == 0
+
+
+def test_annual_interest_cannot_create_negative_payout_or_partial_ledger():
+    case = scenario([(0, 0, 0.2)])
+    case = replace(case, rosca=replace(case.rosca, period_days=1000))
+    prices = PricePath((1.0,) * 6, "long", None, (1.0,) * 5008)
+    model = AuctionRoscaModel(case, "fixed", prices)
+    with pytest.raises(ValueError, match="interest.*pot"):
+        model.step()
+    assert model.cash_balance == 0
+    assert all(a.total_contributed == 0 for a in model.agents_by_id.values())
+
+
 def test_six_member_winning_discount_and_lock():
     model = AuctionRoscaModel(
         scenario([(0, 0, 0.20), (0, 1, 0.10)]), "fixed", constant_prices()
     )
     model.step()
     winner = model.agents_by_id[0]
-    assert winner.net_payout == pytest.approx(480.0)
-    assert model.interest_balance == pytest.approx(120.0)
+    assert winner.net_payout == pytest.approx(558.9041095890411)
+    assert model.interest_balance == pytest.approx(41.0958904109589)
     assert winner.remaining_obligation == pytest.approx(500.0)
     assert winner.locked_eth == pytest.approx(500.0)
-    assert model.cash_balance == pytest.approx(120.0)
+    assert model.cash_balance == pytest.approx(41.0958904109589)
     assert all(model.agents_by_id[i].locked_eth == 0 for i in range(1, 6))
 
 
@@ -50,10 +89,10 @@ def test_trace_matches_first_auction():
     assert trace[0].winner_id == 0
     assert trace[0].contributions_by_member == (100.0,) * 6
     assert trace[0].gross_pot == 600.0
-    assert trace[0].bid_interest == 120.0
-    assert trace[0].net_payout == 480.0
+    assert trace[0].bid_interest == pytest.approx(41.0958904109589)
+    assert trace[0].net_payout == pytest.approx(558.9041095890411)
     assert trace[0].eth_locked_by_member == (500.0,) + (0.0,) * 5
-    assert trace[0].pool_cash == 120.0
+    assert trace[0].pool_cash == pytest.approx(41.0958904109589)
 
 
 def test_trace_keeps_eth_after_fixed_contribution():
@@ -95,7 +134,7 @@ def test_same_day_default_trace_order_independent():
 
 def test_paid_member_cannot_bid_again_or_pay_extra_interest():
     model = AuctionRoscaModel(
-        scenario([(0, 0, 0.20), (1, 0, 0.90), (1, 1, 0.10)]),
+        scenario([(0, 0, 0.20), (1, 0, 0.20), (1, 1, 0.10)]),
         "fixed",
         constant_prices(),
     )
@@ -167,7 +206,9 @@ def test_duplicate_bid_is_rejected():
         AuctionRoscaModel(scenario([(0, 0, 0.1), (0, 0, 0.2)]), "fixed", constant_prices())
 
 
-@pytest.mark.parametrize("sale_price,used,loss", [(0.8, 100.0, 0.0), (0.6, 120.0, 80.0)])
+@pytest.mark.parametrize("sale_price,used,loss", [
+    (0.95, 25.0, 0.0), (0.6, 41.0958904109589, 158.9041095890411),
+])
 def test_first_recipient_default_consumes_interest_before_principal(sale_price, used, loss):
     original = scenario([(0, 0, 0.2)])
     shocked = PricePath((1.0,) * 6, "shock", None, (1.0, sale_price) + (1.0,) * 156)
@@ -178,15 +219,15 @@ def test_first_recipient_default_consumes_interest_before_principal(sale_price, 
     assert result.interest_used == pytest.approx(used)
     assert result.principal_loss == pytest.approx(loss)
     if loss:
-        assert [r.principal_loss for r in result.agent_results[1:]] == pytest.approx([16.0] * 5)
+        assert [r.principal_loss for r in result.agent_results[1:]] == pytest.approx([31.78082191780822] * 5)
 
 
 def test_normal_completion_distributes_interest_by_wait():
     bids = [(period, period, 0.2 if period == 0 else 0.0) for period in range(6)]
     result = AuctionRoscaModel(scenario(bids), "fixed", constant_prices()).run()
     assert result.stop_reason == "completed"
-    assert result.interest_retained == pytest.approx(120.0)
-    assert result.interest_distributed == pytest.approx(120.0)
+    assert result.interest_retained == pytest.approx(41.0958904109589)
+    assert result.interest_distributed == pytest.approx(41.0958904109589)
     interests = [r.interest_received for r in result.agent_results]
     assert interests[0] == 0.0
     assert interests == sorted(interests)
@@ -212,20 +253,20 @@ def test_sale_slippage_does_not_reduce_initial_bid_collateral():
     assert result.agent_results[0].eth_locked == pytest.approx(0.25)
     assert result.eth_sale_proceeds == pytest.approx(450)
     assert result.obligation_uncollected == pytest.approx(50)
-    assert result.interest_used == pytest.approx(50)
-    assert result.principal_loss == 0
-    assert result.interest_distributed == pytest.approx(70)
+    assert result.interest_used == pytest.approx(41.0958904109589)
+    assert result.principal_loss == pytest.approx(8.9041095890411)
+    assert result.interest_distributed == 0
 
 
 @pytest.mark.parametrize("first_bid,sale_price,from_default,from_others,used", [
-    (0.2, 0.5, 120, 30, 150),
-    (0.2, 0.7, 50, 0, 50),
-    (0.0, 0.5, 0, 40, 40),
+    (0.2, 0.71, 41.0958904109589, 3.9041095890411, 45),
+    (0.2, 0.76, 20, 0, 20),
+    (0.0, 0.71, 0, 13.15068493150685, 13.15068493150685),
 ])
 def test_interest_sources_follow_freeze_group_not_event_order(
     first_bid, sale_price, from_default, from_others, used,
 ):
-    original = scenario([(0, 0, first_bid), (1, 1, 40 / 600)])
+    original = scenario([(0, 0, first_bid), (1, 1, 0.1)])
     case = replace(original, forced_defaults=(AuctionEvent(0, 60),),
                    missed_contributions=(AuctionEvent(2, 60), AuctionEvent(3, 60)))
     daily = (1.0,) * 60 + (sale_price,) * 98
@@ -237,14 +278,14 @@ def test_interest_sources_follow_freeze_group_not_event_order(
     assert result.interest_used == pytest.approx(used)
     assert result.interest_used_from_defaulting == pytest.approx(from_default)
     assert result.interest_used_from_other_members == pytest.approx(from_others)
-    assert result.agent_results[0].bid_interest_paid == pytest.approx(600 * first_bid)
-    assert result.agent_results[1].bid_interest_paid == pytest.approx(40)
+    assert result.agent_results[0].bid_interest_paid == pytest.approx(41.0958904109589 if first_bid else 0)
+    assert result.agent_results[1].bid_interest_paid == pytest.approx(13.15068493150685)
     assert result.agent_results[2].bid_interest_paid == 0
     assert result.agent_results[2].is_trigger_default
     assert not result.agent_results[2].settlement_shortfall
     assert result.obligation_uncollected == pytest.approx(max(0, 400 - 500 * sale_price))
-    if first_bid == 0.2 and sale_price == 0.5:
-        assert result.interest_distributed == pytest.approx(10)
+    if first_bid == 0.2 and sale_price == 0.71:
+        assert result.interest_distributed == pytest.approx(9.24657534246575)
         assert result.principal_loss == 0
 
 
@@ -275,7 +316,7 @@ def test_completion_has_no_interest_buffer_usage_or_shortfalls():
 
 
 def test_period_snapshots_precede_terminal_return_and_ignore_paid_bids():
-    bids = [(i, i, 0.1) for i in range(6)] + [(1, 0, 0.9)]
+    bids = [(i, i, 0.1) for i in range(6)] + [(1, 0, 0.2)]
     model = AuctionRoscaModel(scenario(bids), "fixed", constant_prices())
     result = model.run()
     assert model.period_trace[1].insufficient_eth_bidder_ids == ()

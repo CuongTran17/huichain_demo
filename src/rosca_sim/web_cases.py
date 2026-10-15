@@ -113,7 +113,7 @@ def dump_cases_json(cases: tuple[NamedCase, ...]) -> str:
             "scenario": asdict(case.scenario),
             "window_start": case.window_start.isoformat() if case.window_start else None,
         })
-    return json.dumps({"schema_version": 1, "cases": rows}, ensure_ascii=False,
+    return json.dumps({"schema_version": 2, "cases": rows}, ensure_ascii=False,
                       allow_nan=False, indent=2, sort_keys=True)
 
 
@@ -124,8 +124,8 @@ def load_cases_json(payload: str) -> tuple[NamedCase, ...]:
         raise ValueError(f"invalid JSON or nonfinite number: {error}") from error
     _reject_nonfinite(raw)
     values = _keys(raw, {"schema_version", "cases"}, "case bundle")
-    if type(values["schema_version"]) is not int or values["schema_version"] != 1:
-        raise ValueError("unsupported case schema_version")
+    if type(values["schema_version"]) is not int or values["schema_version"] != 2:
+        raise ValueError("unsupported case schema_version; schema 2 uses annual_rate, not legacy gross discount")
     if type(values["cases"]) is not list:
         raise ValueError("cases must be a list")
     cases = []

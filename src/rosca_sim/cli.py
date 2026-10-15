@@ -67,6 +67,8 @@ def load_auction_config(path: Path) -> LoadedAuctionConfig:
         collateral = CollateralConfig(**raw["collateral"])
         behavior = BehaviorConfig(**raw["behavior"])
         agents = tuple(AuctionAgentSeed(**item) for item in raw["agents"])
+        if any("rate" in item for item in raw["bids"]):
+            raise ValueError("legacy gross-discount rate is unsupported; supply annual_rate (0..0.20)")
         bids = tuple(AuctionBid(**item) for item in raw["bids"])
         events = raw.get("events", {})
         scenario = AuctionScenario(

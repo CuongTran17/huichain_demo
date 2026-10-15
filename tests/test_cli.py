@@ -66,8 +66,19 @@ def test_auction_pilot_command_writes_separate_outputs(tmp_path):
     with (output / "auction_agent_results.csv").open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     first = next(row for row in rows if row["policy"] == "fixed" and row["member_id"] == "0")
-    assert float(first["net_payout"]) == pytest.approx(480)
-    assert float(first["winning_bid"]) == pytest.approx(0.2)
+    assert float(first["net_payout"]) == pytest.approx(558.9041095890411)
+    assert float(first["winning_annual_rate"]) == pytest.approx(0.2)
+    metadata = json.loads((output / "auction_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["bid_rate_basis"] == "annual_simple_act365"
+    assert metadata["result_schema_version"] == 2
+
+
+def test_auction_rejects_legacy_gross_discount_toml(tmp_path):
+    from pathlib import Path
+    source = Path(__file__).parents[1] / "configs" / "auction-six-member.toml"
+    old = source.read_text(encoding="utf-8").replace("annual_rate =", "rate =")
+    with pytest.raises(ValueError, match="legacy gross-discount"):
+        cli.load_auction_config(write_config(tmp_path, old))
 
 
 @pytest.mark.parametrize("old,new,match", [

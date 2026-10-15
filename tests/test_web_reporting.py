@@ -30,10 +30,11 @@ def test_chart_rows_reconcile_to_engine():
     assert sum(row["principal_loss_usdc"] for row in rows) == run.result.principal_loss
     assert reporting().comparison_rows((run,))[0]["principal_loss_usdc"] == run.result.principal_loss
     trace = reporting().trace_rows(run)
-    assert next(row for row in trace if row["period"] == 0 and row["member_id"] == 0)["payout_usdc"] == 480.0
-    assert trace[0]["retained_interest_usdc"] == 120.0
+    assert next(row for row in trace if row["period"] == 0 and row["member_id"] == 0)["payout_usdc"] == pytest.approx(558.9041095890411)
+    assert trace[0]["retained_interest_usdc"] == pytest.approx(41.0958904109589)
     assert trace[0]["contribution_usdc"] == 100.0
-    assert rows[0]["bid_interest_paid_usdc"] == 120
+    assert rows[0]["bid_interest_paid_usdc"] == pytest.approx(41.0958904109589)
+    assert rows[0]["bid_rate_basis"] == "annual_simple_act365"
     assert not rows[0]["is_trigger_default"]
     assert not rows[0]["settlement_shortfall"]
     summary, = reporting().comparison_rows((run,))
