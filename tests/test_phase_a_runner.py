@@ -66,7 +66,7 @@ def test_phase_a_incomplete_job_not_reused_or_counted(tmp_path):
         module.run_phase_a_job(paths, 0.0, 1.0, tmp_path, fingerprint)
 
 
-def test_phase_a_full_small_grid_uses_all_cases_for_global_threshold(tmp_path):
+def test_phase_a_full_small_grid_uses_all_cases_for_global_threshold(tmp_path, monkeypatch):
     module, paths, fingerprint = small_study(tmp_path)
     for rate in module.ANNUAL_RATES:
         for ratio in module.COARSE_RATIOS:
@@ -81,6 +81,12 @@ def test_phase_a_full_small_grid_uses_all_cases_for_global_threshold(tmp_path):
     assert (tmp_path / "phase_a_worst_members.csv").is_file()
     extra = module.plan_phase_a_refinement(tmp_path)
     assert .8 in extra and .95 in extra
+    assert json.loads((tmp_path / "phase_a_metadata.json").read_text())["aggregate_status"] == "incomplete"
+    import csv
+    with (tmp_path / "phase_a_thresholds.csv").open(newline="") as handle:
+        global_saved, = [r for r in csv.DictReader(handle) if r["scope"] == "global"]
+    assert global_saved["status"] == "incomplete" and global_saved["candidate_ratio"] == ""
+    assert global_saved["expected_checks"] == str((8 + len(extra)) * 285)
     assert module.plan_phase_a_refinement(tmp_path) == extra
     assert module.aggregate_phase_a(tmp_path)[-1]["status"] == "incomplete"
     for rate in module.ANNUAL_RATES:
@@ -89,6 +95,15 @@ def test_phase_a_full_small_grid_uses_all_cases_for_global_threshold(tmp_path):
     refined = module.aggregate_phase_a(tmp_path)
     assert refined[-1]["status"] == "complete"
     assert refined[-1]["completed_checks"] == (8 + len(extra)) * 285
+    def interrupted(*args, **kwargs):
+        raise RuntimeError("interrupted after extending grid")
+    monkeypatch.setattr(module, "AuctionRoscaModel", interrupted)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        module.run_phase_a_job(paths, .2, 1.05, tmp_path, fingerprint)
+    assert json.loads((tmp_path / "phase_a_metadata.json").read_text())["aggregate_status"] == "incomplete"
+    with (tmp_path / "phase_a_thresholds.csv").open(newline="") as handle:
+        global_saved, = [r for r in csv.DictReader(handle) if r["scope"] == "global"]
+    assert global_saved["status"] == "incomplete" and global_saved["candidate_ratio"] == ""
 
 
 def test_refinement_uses_five_point_grid_and_rejects_incomplete():

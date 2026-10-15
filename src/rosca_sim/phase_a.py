@@ -216,7 +216,9 @@ def run_phase_a_job(paths, annual_rate, ratio, output_dir: Path, fingerprint: st
         return target
     if ratio not in manifest["planned_ratios"]:
         manifest["planned_ratios"] = sorted(set(manifest["planned_ratios"]) | {ratio})
+        manifest["aggregate_status"] = "incomplete"
         _atomic_json(output_dir / "phase_a_metadata.json", manifest)
+        aggregate_phase_a(output_dir)
     started = perf_counter()
     summaries, members = [], []
     for case in (c for c in phase_a_cases() if c.annual_rate == annual_rate):
@@ -345,5 +347,8 @@ def plan_phase_a_refinement(output_dir: Path) -> tuple[float, ...]:
     summaries, _ = _collect_jobs(output_dir, manifest, COARSE_RATIOS)
     additions = refinement_ratios(_threshold_rows(summaries, COARSE_RATIOS, manifest["windows"]))
     manifest["planned_ratios"] = sorted(set(manifest["planned_ratios"]) | set(additions))
+    manifest["aggregate_status"] = "incomplete"
     _atomic_json(output_dir / "phase_a_metadata.json", manifest)
+    # Invalidate old threshold claims before any new engine job can fail or be interrupted.
+    aggregate_phase_a(output_dir)
     return additions
