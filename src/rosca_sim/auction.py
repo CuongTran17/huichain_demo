@@ -125,6 +125,9 @@ class AuctionPeriodTrace:
     eth_released_by_member: tuple[float, ...]
     pool_cash: float
     retained_interest: float
+    remaining_obligation_by_member: tuple[float, ...]
+    retained_eth_by_member: tuple[float, ...]
+    insufficient_eth_bidder_ids: tuple[int, ...]
 
 
 class AuctionAgent(Agent):
@@ -298,6 +301,7 @@ class AuctionRoscaModel(Model):
     def _record_period(
         self, period: int, day: int, before: tuple[tuple[float, float, float], ...],
         winner_id: int | None, bid_interest: float, net_payout: float,
+        insufficient_eth_bidder_ids: tuple[int, ...],
     ) -> None:
         agents = tuple(self.agents_by_id[i] for i in range(self.auction.rosca.members))
         self._period_trace.append(AuctionPeriodTrace(
@@ -311,6 +315,9 @@ class AuctionRoscaModel(Model):
             eth_released_by_member=tuple(a.eth_released - old[2] for a, old in zip(agents, before)),
             pool_cash=self.cash_balance,
             retained_interest=self.interest_balance,
+            remaining_obligation_by_member=tuple(a.remaining_obligation for a in agents),
+            retained_eth_by_member=tuple(a.locked_eth for a in agents),
+            insufficient_eth_bidder_ids=insufficient_eth_bidder_ids,
         ))
 
     def _required_eth(self, agent: AuctionAgent, period: int, price: float) -> float:
@@ -350,6 +357,7 @@ class AuctionRoscaModel(Model):
         winner: AuctionAgent | None = None
         winning_bid: AuctionBid | None = None
         required_eth = 0.0
+        insufficient_eth_ids: list[int] = []
         for bid in candidates:
             agent = self.agents_by_id[bid.member_id]
             if agent.payout_day is not None:
@@ -358,10 +366,11 @@ class AuctionRoscaModel(Model):
             if agent.available_eth + 1e-9 >= needed:
                 winner, winning_bid, required_eth = agent, bid, needed
                 break
+            insufficient_eth_ids.append(agent.member_id)
         if winner is None or winning_bid is None:
             self.stop_reason = "no_eligible_bid"
             self.freeze_day = day
-            self._record_period(period, day, before, None, 0.0, 0.0)
+            self._record_period(period, day, before, None, 0.0, 0.0, tuple(insufficient_eth_ids))
             return
         winner.available_eth -= required_eth
         winner.locked_eth = required_eth
@@ -378,7 +387,8 @@ class AuctionRoscaModel(Model):
         self.cash_balance -= winner.net_payout
         self.interest_balance += discount
         self.payout_order.append(winner.member_id)
-        self._record_period(period, day, before, winner.member_id, discount, winner.net_payout)
+        self._record_period(period, day, before, winner.member_id, discount, winner.net_payout,
+                            tuple(insufficient_eth_ids))
         self.period += 1
         if self.period == rosca.periods:
             self.stop_reason = "completed"

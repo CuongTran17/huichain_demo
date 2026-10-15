@@ -137,6 +137,8 @@ def test_unfunded_high_bid_is_skipped():
     model.step()
     assert model.payout_order == [1]
     assert model.agents_by_id[0].locked_eth == 0.0
+    assert model.period_trace[0].insufficient_eth_bidder_ids == (0,)
+    assert model.period_trace[0].retained_eth_by_member[1] == 500
 
 
 def test_no_eligible_bid_freezes_without_payout():
@@ -147,6 +149,11 @@ def test_no_eligible_bid_freezes_without_payout():
     assert model.stop_reason == "no_eligible_bid"
     assert model.payout_order == []
     assert model.cash_balance == pytest.approx(600.0)
+    assert model.period_trace[0].insufficient_eth_bidder_ids == (0,)
+    result = model.run()
+    assert result.default_count == 0
+    assert result.principal_loss == 0
+    assert sum(a.principal_repaid for a in result.agent_results) == 600
 
 
 @pytest.mark.parametrize("rate", [True, -0.1, 1.0, math.nan, math.inf])
@@ -265,6 +272,28 @@ def test_completion_has_no_interest_buffer_usage_or_shortfalls():
     assert result.interest_used_from_other_members == 0
     assert result.secondary_shortfall_count == 0
     assert not any(a.is_trigger_default or a.settlement_shortfall for a in result.agent_results)
+
+
+def test_period_snapshots_precede_terminal_return_and_ignore_paid_bids():
+    bids = [(i, i, 0.1) for i in range(6)] + [(1, 0, 0.9)]
+    model = AuctionRoscaModel(scenario(bids), "fixed", constant_prices())
+    result = model.run()
+    assert model.period_trace[1].insufficient_eth_bidder_ids == ()
+    assert model.period_trace[1].retained_eth_by_member[0] == 500
+    assert model.period_trace[1].eth_locked_by_member[0] == 0
+    assert model.period_trace[-1].remaining_obligation_by_member == (0,) * 6
+    assert model.period_trace[-1].retained_eth_by_member[0] == 500
+    assert result.agent_results[0].eth_returned == 500
+
+
+def test_missing_bids_stop_without_default_or_invented_payout():
+    model = AuctionRoscaModel(scenario([]), "fixed", constant_prices())
+    result = model.run()
+    assert result.stop_reason == "no_eligible_bid"
+    assert result.default_count == 0
+    assert model.period_trace[0].insufficient_eth_bidder_ids == ()
+    assert result.payout_order == ()
+    assert sum(a.principal_repaid for a in result.agent_results) == 600
 
 
 def test_due_date_default_freezes_before_new_contributions():

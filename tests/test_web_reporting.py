@@ -2,6 +2,7 @@ from dataclasses import replace
 from datetime import date, timedelta
 import importlib
 import json
+import pytest
 
 from rosca_sim.auction import AuctionEvent
 from rosca_sim.prices import PricePoint
@@ -80,6 +81,39 @@ def test_no_eligible_bid_is_not_a_safe_candidate():
     assert runs[0].result.stop_reason == "no_eligible_bid"
     rows = reporting().frontier_rows(runs)
     assert reporting().candidate_ratio(rows, case.case_id) is None
+    assert rows[0]["completed_run_count"] == 0
+    assert rows[0]["mean_payout_count"] == 0
+
+
+def test_coverage_is_observational_and_zero_obligation_is_not_applicable():
+    case, _ = fixture_data()
+    case = replace(case, scenario=replace(case.scenario,
+        collateral=replace(case.scenario.collateral, fixed_ratio=1.0)))
+    points = tuple(PricePoint(START + timedelta(days=i), 2000 if i < 30 else 1000)
+                   for i in range(180))
+    run, = run_named_cases((case,), points, 42, "historical", "USD")
+    rows = reporting().trace_rows(run)
+    second = next(row for row in rows if row["period"] == 1 and row["member_id"] == 0)
+    assert second["remaining_obligation_usdc"] == 400
+    assert second["retained_eth"] == pytest.approx(0.25)
+    assert second["coverage_ratio"] == pytest.approx(0.625)
+    assert second["collateral_shortfall_usdc"] == pytest.approx(150)
+    assert rows[1]["coverage_ratio"] is None
+    assert rows[-1]["coverage_ratio"] is None
+    assert rows[-1]["collateral_shortfall_usdc"] == 0
+    assert run.result.stop_reason == "completed"
+    assert run.result.eth_sale_proceeds == 0
+
+
+def test_covered_default_can_be_candidate_without_completing():
+    case, points = fixture_data()
+    case = replace(case, scenario=replace(case.scenario,
+        forced_defaults=(AuctionEvent(0, 1),)))
+    runs = run_sweep((case,), points, (1.0,), (START,), 42, "historical", "USD")
+    row, = reporting().frontier_rows(runs)
+    assert row["completion_share"] == 0
+    assert row["mean_payout_count"] == 1
+    assert reporting().candidate_ratio((row,), case.case_id) == 1.0
 
 
 def test_frontier_date_span_covers_all_sampled_windows():

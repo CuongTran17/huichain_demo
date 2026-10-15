@@ -80,6 +80,9 @@ def trace_rows(run: CaseRun) -> tuple[dict[str, object], ...]:
             payout = period.net_payout if period.winner_id == member_id else 0.0
             cumulative_contribution[member_id] += amount
             cumulative_payout[member_id] += payout
+            obligation = period.remaining_obligation_by_member[member_id]
+            retained_eth = period.retained_eth_by_member[member_id]
+            collateral_value = retained_eth * run.price_path.prices[period.period]
             rows.append({
                 **_meta(run), "case_id": run.case.case_id, "case_name": run.case.name,
                 "day": period.day, "period": period.period, "member_id": member_id,
@@ -94,6 +97,11 @@ def trace_rows(run: CaseRun) -> tuple[dict[str, object], ...]:
                 "eth_locked": period.eth_locked_by_member[member_id],
                 "eth_released": period.eth_released_by_member[member_id],
                 "winner_id": period.winner_id,
+                "remaining_obligation_usdc": obligation,
+                "retained_eth": retained_eth,
+                "coverage_ratio": collateral_value / obligation if obligation > 1e-9 else None,
+                "collateral_shortfall_usdc": max(0.0, obligation - collateral_value),
+                "skipped_for_insufficient_eth": member_id in period.insufficient_eth_bidder_ids,
             })
     return tuple(rows)
 
@@ -128,6 +136,9 @@ def frontier_rows(runs: tuple[SweepRun, ...]) -> tuple[dict[str, object], ...]:
             "start_date": first_day.isoformat(), "end_date": last_day.isoformat(),
             "runs": len(group), **metrics,
             "loss_run_count": loss_count,
+            "completed_run_count": sum(run.result.stop_reason == "completed" for run in group),
+            "completion_share": sum(run.result.stop_reason == "completed" for run in group) / len(group),
+            "mean_payout_count": mean(len(run.result.payout_order) for run in group),
             "median_max_member_lock_usdc_proxy": median(_lock_proxy(run) for run in group),
             "changed_order_count": sum(run.result.payout_order != baseline[(case_id, run.start)]
                                        for run in group),
