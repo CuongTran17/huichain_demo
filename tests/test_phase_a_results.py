@@ -118,3 +118,47 @@ def test_filters_aggregate_raw_max_and_counts_with_expected_groups(phase_a_copy)
     for bad in (replace(filters, min_ratio=float("nan")), replace(filters, max_ratio=.5),
                 replace(filters, groups=((1, (2,)),))):
         with pytest.raises(ValueError): module.filter_summaries(study, bad)
+
+
+def test_replay_single_real_run_matches_saved_members_and_frames(phase_a_copy, monkeypatch):
+    from rosca_sim import web_analysis
+    module = reader()
+    directory, prices = phase_a_copy
+    study = module.load_study(directory)
+    before = files(directory)
+    original = web_analysis.AuctionRoscaModel
+    calls = []
+    def counted(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(web_analysis, "AuctionRoscaModel", counted)
+    replay = module.replay_case(study, (.2, 1., 1, (0,)), "2022-01-01", prices)
+    assert len(calls) == 1
+    assert replay.run.result.freeze_day == 1
+    assert replay.run.result.settlement_day == 8
+    assert replay.run.result.agent_results[0].net_payout == pytest.approx(558.9041095890411)
+    assert replay.run.result.worst_member_loss == 0.
+    assert not replay.mismatches
+    assert len(replay.checks) > 6
+    assert [(f["kind"], f["day"]) for f in module.replay_frames(replay)] == [
+        ("initial", 0), ("period", 0), ("freeze", 1), ("settlement", 8)]
+    assert files(directory) == before
+    prices.write_text(prices.read_text() + "\n")
+    with pytest.raises(ValueError, match="SHA|hash"):
+        module.replay_case(study, (.2, 1., 1, (0,)), "2022-01-01", prices)
+    assert len(calls) == 1
+
+
+def test_replay_checks_only_corresponding_saved_window(phase_a_copy):
+    module = reader()
+    study = module.load_study(phase_a_copy[0])
+    key = (.2, 1., 1, (0,))
+    summary = next(r for r in study.summaries if module.case_key(r) == key)
+    changed = {**summary, "worst_total_start": "2022-01-02", "max_total_loss": 999.}
+    altered = replace(study, summaries=tuple(changed if r is summary else r for r in study.summaries))
+    replay = module.replay_case(altered, key, "2022-01-01", phase_a_copy[1])
+    assert "principal_loss" not in replay.checks
+    assert not replay.mismatches
+    changed["interest_used_at_worst_individual"] = 999.
+    replay = module.replay_case(altered, key, "2022-01-01", phase_a_copy[1])
+    assert "interest_used" in replay.mismatches

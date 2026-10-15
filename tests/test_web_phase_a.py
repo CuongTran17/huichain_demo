@@ -27,3 +27,23 @@ def test_chart_units_missing_values_segments_and_fixed_rate_colors():
                                              status="incomplete"),)).to_dict()
     assert "candidate_ratio" in json.dumps(threshold)
     assert "incomplete" in json.dumps(threshold)
+
+
+def test_replay_renderer_frame_changes_do_not_simulate(phase_a_copy, monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from rosca_sim import phase_a_results as results, web_analysis
+    replay = results.replay_case(results.load_study(phase_a_copy[0]), (.2, 1., 1, (0,)),
+                                 "2022-01-01", phase_a_copy[1])
+    def forbidden(*args, **kwargs): raise AssertionError("frame must not simulate")
+    monkeypatch.setattr(web_analysis, "AuctionRoscaModel", forbidden)
+    at = AppTest.from_string("from rosca_sim.web_phase_a import render_replay\nimport streamlit as st\nrender_replay(st.session_state.replay)")
+    at.session_state["replay"] = replay
+    at.run(timeout=30)
+    assert not at.exception
+    assert len(at.get("vega_lite_chart")) >= 1
+    at.select_slider(key="pa_frame").set_value(2).run()
+    assert not at.exception
+    assert any("snapshot" in x.value for x in at.info)
+    at.select_slider(key="pa_frame").set_value(3).run()
+    assert not at.exception
+    assert any("Lãi đã dùng" in x.label for x in at.metric)

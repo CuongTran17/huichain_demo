@@ -1,10 +1,15 @@
 """Read-only adapter for the fixed annual-interest phase-A study."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import date
+import hashlib
 from pathlib import Path
 from math import isfinite
 
 from rosca_sim import phase_a as pa
+from rosca_sim.prices import load_price_csv
+from rosca_sim.web_analysis import CaseRun, run_named_cases
+from rosca_sim.web_cases import NamedCase
 
 CaseKey = tuple[float, float, int, tuple[int, ...]]
 GroupKey = tuple[int, tuple[int, ...]]
@@ -191,3 +196,69 @@ def risk_rows(study: StudySnapshot, filters: StudyFilters) -> tuple[dict[str, ob
 
 def heatmap_rows(study: StudySnapshot, filters: StudyFilters, annual_rate: float) -> tuple[dict[str, object], ...]:
     return _aggregate(study, filters, annual_rate)
+
+
+@dataclass(frozen=True)
+class ReplayResult:
+    run: CaseRun
+    checks: tuple[str, ...]
+    mismatches: tuple[str, ...]
+
+
+def replay_case(study: StudySnapshot, key: CaseKey, window_start: str, csv_path: Path) -> ReplayResult:
+    _assert_current(study)
+    summary = next((r for r in study.summaries if case_key(r) == key), None)
+    if summary is None or window_start not in study.manifest["identity"]["window_starts"]:
+        raise ValueError("case/window is not in the validated study")
+    csv_path = Path(csv_path).expanduser().resolve()
+    before = _stat(csv_path)
+    provenance = study.manifest["identity"]["provenance"]
+    try:
+        if hashlib.sha256(csv_path.read_bytes()).hexdigest() != provenance["price_csv_sha256"]:
+            raise ValueError("price CSV SHA256 does not match study")
+        points = load_price_csv(csv_path, date(2022, 1, 1), date(2022, 12, 31))
+        paths = pa.phase_a_paths(points)
+        identity = study.manifest["identity"]
+        if (pa._paths_hash(paths) != identity["paths_sha256"]
+            or sorted(p.start_date for p in paths) != identity["window_starts"]):
+            raise ValueError("price paths/starts do not match study")
+        if _stat(csv_path) != before:
+            raise ValueError("price source changed; reload")
+        path = next(p for p in paths if p.start_date == window_start)
+        scenario = pa.phase_a_scenario(pa.PhaseACase(key[0], key[2], key[3]), key[1], path)
+        case = NamedCase("phase-a-replay", str(key), scenario, date.fromisoformat(window_start))
+        run, = run_named_cases((case,), points, 42, provenance["source_label"], provenance["quote_asset"])
+    except (OSError, KeyError, TypeError) as error:
+        raise ValueError(f"{csv_path}: {error}") from error
+    checks, mismatches = [], []
+    def check(label, actual, expected):
+        checks.append(label)
+        equal = (type(actual) is type(expected) and actual == expected)
+        if type(actual) in (int, float) and type(expected) in (int, float):
+            equal = abs(actual - expected) <= 1e-9 if isinstance(actual, float) else actual == expected
+        if not equal:
+            mismatches.append(label)
+    result = run.result
+    if window_start == summary["worst_total_start"]:
+        check("principal_loss", result.principal_loss, summary["max_total_loss"])
+    if window_start == summary["worst_individual_start"]:
+        check("worst_member_loss", result.worst_member_loss, summary["max_individual_loss"])
+        check("interest_used", result.interest_used, summary["interest_used_at_worst_individual"])
+        check("obligation_uncollected", result.obligation_uncollected, summary["uncollected_at_worst_individual"])
+        saved = {r["member_id"]: r for r in member_rows(study, key)}
+        for member in result.agent_results:
+            for field, value in asdict(member).items():
+                check(f"member[{member.member_id}].{field}", value, saved[member.member_id].get(field))
+    _assert_current(study)
+    if _stat(csv_path) != before:
+        raise ValueError("price source changed; reload")
+    return ReplayResult(run, tuple(checks), tuple(mismatches))
+
+
+def replay_frames(replay: ReplayResult) -> tuple[dict[str, object], ...]:
+    frames = [("initial", "Ban đầu", 0, None)]
+    frames.extend(("period", f"Sau kỳ {t.period + 1}", t.day, i) for i, t in enumerate(replay.run.trace))
+    frames.extend((("freeze", "Đóng băng", replay.run.result.freeze_day, None),
+                   ("settlement", "Quyết toán", replay.run.result.settlement_day, None)))
+    return tuple(dict(index=i, kind=kind, label=label, day=day, trace_index=trace)
+                 for i, (kind, label, day, trace) in enumerate(frames))
