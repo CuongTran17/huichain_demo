@@ -4,9 +4,13 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 from dataclasses import asdict
+from pathlib import Path
+import json
 
-from rosca_sim.phase_a import ANNUAL_RATES
-from rosca_sim.phase_a_results import member_label, replay_frames
+from rosca_sim.phase_a import ANNUAL_RATES, phase_a_cases
+from rosca_sim.phase_a_results import (StudyFilters, case_key, csv_bytes, filter_summaries,
+    heatmap_rows, load_study, member_label, replay_case, replay_frames, risk_rows,
+    select_worst, study_signature)
 from rosca_sim.web_reporting import trace_rows
 
 RATE_COLOR = alt.Color("annual_rate:N", title="Lãi năm", scale=alt.Scale(
@@ -24,9 +28,9 @@ def threshold_chart(thresholds) -> alt.LayerChart:
         tooltip=[alt.Tooltip("annual_rate:Q", title="Lãi năm", format=".0%"),
                  alt.Tooltip("candidate_ratio:Q", title="Ký quỹ / nghĩa vụ", format=".0%"), "status:N"])
     bars = base.mark_bar(size=40).encode(y=alt.Y("candidate_ratio:Q", title="Ngưỡng ký quỹ", axis=alt.Axis(format=".0%")))
-    labels = base.mark_text(dy=-8).encode(y="candidate_ratio:Q", text="label:N")
+    labels = base.mark_text(dy=-8, color="#888888").encode(y="candidate_ratio:Q", text="label:N")
     # Missing candidates have no bar; status remains visible above the baseline.
-    missing = base.transform_filter("datum.candidate_ratio == null").mark_text(dy=-8).encode(y=alt.value(240), text="label:N")
+    missing = base.transform_filter("datum.candidate_ratio == null").mark_text(dy=-8, color="#888888").encode(y=alt.value(240), text="label:N")
     return (bars + labels + missing).properties(height=260)
 
 
@@ -39,7 +43,7 @@ def risk_chart(rows, metric="max_individual_loss") -> alt.LayerChart:
         segment = segments.get(rate, 0)
         if not row["coverage_complete"]:
             segment += 1
-        plotted.append({**row, "segment": f"{rate}:{segment}"})
+        plotted.append({**row, "worst_key": _case_label(row["worst_key"]) if row["worst_key"] else None, "segment": f"{rate}:{segment}"})
         segments[rate] = segment + (not row["coverage_complete"])
     title = "Mất gốc cá nhân lớn nhất (USDC)" if metric == "max_individual_loss" else "Số tình huống mất gốc"
     tips = [alt.Tooltip("ratio:Q", title="Ký quỹ", format=".0%"),
@@ -57,7 +61,8 @@ def risk_chart(rows, metric="max_individual_loss") -> alt.LayerChart:
 
 
 def heatmap_chart(rows) -> alt.LayerChart:
-    data = [dict(r, status="Đủ dữ liệu" if r["coverage_complete"] else "Thiếu dữ liệu") for r in rows]
+    data = [dict(r, worst_key=_case_label(r["worst_key"]) if r["worst_key"] else None,
+                 status="Đủ dữ liệu" if r["coverage_complete"] else "Thiếu dữ liệu") for r in rows]
     base = alt.Chart(pd.DataFrame(data)).encode(
         x=alt.X("ratio:O", title="Ký quỹ / nghĩa vụ", axis=alt.Axis(labelExpr="format(datum.value, '.0%')")),
         y=alt.Y("k:O", title="Số người đã lĩnh (k)"), tooltip=["annual_rate:Q", "ratio:Q", "k:O",
@@ -126,3 +131,165 @@ def render_replay(replay) -> None:
         st.caption("principal_claim chỉ là gốc cần hoàn cho người chưa lĩnh, không phải toàn bộ lãi/lỗ kinh tế khi giữ ETH. Lãi dùng bù gốc và nghĩa vụ chưa thu không cộng thêm vào tiền hoàn.")
         with st.expander("Bảng quyết toán từng người"):
             st.dataframe(pd.DataFrame(members), hide_index=True)
+
+
+@st.cache_data(show_spinner=False, max_entries=4)
+def _cached_study(directory: str, signature: tuple):
+    study = load_study(Path(directory))
+    if study.signature != signature:
+        raise ValueError("source changed; reload study")
+    return study
+
+
+def _table_download(title, rows, provenance, key):
+    st.caption(f'{len(rows):,} điểm/bản ghi · {provenance["window_count"]} cửa sổ · phạm vi {provenance["scope"]}')
+    with st.expander(title):
+        safe = [{k: json.dumps(v, ensure_ascii=False) if isinstance(v, (tuple, list, dict)) else v
+                 for k, v in row.items()} for row in rows]
+        st.dataframe(pd.DataFrame(safe), hide_index=True)
+        st.download_button("Tải bảng CSV", csv_bytes(rows, provenance), f"{key}.csv", "text/csv", key=key)
+
+
+def _reconcile(key, options, default=None):
+    if st.session_state.get(key) not in options:
+        st.session_state[key] = default if default in options else (options[0] if options else None)
+
+
+def _multi(key, options):
+    if key not in st.session_state:
+        st.session_state[key] = list(options)
+    else:
+        st.session_state[key] = [x for x in st.session_state[key] if x in options]
+
+
+def _group_label(group):
+    return f'k={group[0]} · bùng: {", ".join(member_label(i) for i in group[1])}'
+
+
+def _case_label(key):
+    return f'{key[0]:.0%}/năm · ký quỹ {key[1]:.0%} · {_group_label((key[2], key[3]))}'
+
+
+def render_phase_a() -> None:
+    root = Path(__file__).resolve().parents[2]
+    with st.sidebar:
+        st.subheader("Nguồn nghiên cứu 2022")
+        directory = st.text_input("Thư mục kết quả", value=str(root / "results/phase-a-2022-annual"), key="pa_results_dir")
+        csv_path = st.text_input("CSV giá để xem diễn biến", value=str(root / "data/eth_usdt_binance_2022.csv"), key="pa_prices_csv")
+        if st.button("Tải lại dữ liệu", key="pa_reload"):
+            _cached_study.clear()
+            st.session_state.pop("pa_replay_result", None)
+            st.session_state.pop("pa_replay_signature", None)
+    st.header("Kết quả nghiên cứu ETH 2022")
+    st.caption("Không mất gốc trong bộ điều kiện đã thử không có nghĩa là an toàn tuyệt đối. Các cửa sổ chồng lấn không phải các mẫu độc lập.")
+    loading = st.empty()
+    loading.markdown('<div style="height:48px;background:#ededed;border-radius:8px" aria-label="Đang đọc checkpoint"></div>', unsafe_allow_html=True)
+    try:
+        signature = study_signature(Path(directory))
+        study = _cached_study(directory, signature)
+    except (ValueError, OSError) as error:
+        loading.empty()
+        st.error(f"Không thể đọc nghiên cứu: {error}")
+        return
+    loading.empty()
+    manifest = study.manifest
+    identity = manifest["identity"]
+    provenance = dict(identity["provenance"], fingerprint=manifest["fingerprint"],
+                      window_count=manifest["windows"], scope="toàn nghiên cứu", bid_rate_basis=identity["bid_rate_basis"])
+    st.caption(f'{study.directory} · fingerprint {manifest["fingerprint"][:12]}')
+    with st.expander("Nguồn và giả định nghiên cứu"):
+        st.json(identity)
+        st.write("6 người, 100 USDC mỗi 30 ngày. Giá đóng cửa 2022, trượt giá 0; đủ ETH để lĩnh và người tuân thủ trả đủ USDC ngày 7. ETH giữ đến quyết toán, lãi chung có thể bù gốc. 1 USDT ≈ 1 USDC.")
+        st.write("annual_simple_act365: lãi trên nghĩa vụ ban đầu theo thời gian còn lại, không phải dư nợ giảm dần; chưa xác nhận tuân thủ pháp luật.")
+    a, b, c = st.columns(3)
+    a.metric("Jobs hợp lệ", f"{study.completed_jobs}/{study.expected_jobs}")
+    b.metric("Lượt mô phỏng hoàn tất", f"{study.completed_runs:,}")
+    b.caption(f"Trên {study.expected_runs:,} lượt dự kiến")
+    global_row = study.thresholds[-1]
+    status = {"incomplete": "Chưa đủ dữ liệu", "not_found": "Chưa tìm thấy trong lưới"}
+    c.metric("Ngưỡng chung toàn nghiên cứu", f'{global_row["candidate_ratio"]:.0%}' if global_row["candidate_ratio"] is not None else status[global_row["status"]])
+    st.subheader("Ngưỡng ký quỹ theo lãi năm")
+    st.altair_chart(threshold_chart(study.thresholds), width="stretch")
+    st.caption("Giao các tập PASS trên mọi nhóm, cửa sổ và tỷ lệ đã lên kế hoạch. Bộ lọc bên dưới không đổi ngưỡng này.")
+    _table_download("Bảng ngưỡng toàn nghiên cứu", tuple(r for r in study.thresholds if r["scope"] == "rate"), provenance, "pa_threshold_csv")
+    st.subheader("Khám phá rủi ro")
+    rates = st.multiselect("Lãi chào (%/năm)", list(ANNUAL_RATES), default=list(ANNUAL_RATES), format_func=lambda r: f"{r:.0%}/năm", key="pa_rates")
+    ratios = sorted(manifest["planned_ratios"])
+    previous = st.session_state.get("pa_ratio_range", (ratios[0], ratios[-1]))
+    if not isinstance(previous, (tuple, list)) or any(v not in ratios for v in previous):
+        st.session_state.pa_ratio_range = (ratios[0], ratios[-1])
+    ratio_range = st.select_slider("Khoảng ký quỹ / nghĩa vụ", options=ratios,
+        value=(ratios[0], ratios[-1]), key="pa_ratio_range", format_func=lambda r: f"{r:.0%}")
+    paid = st.multiselect("Số người đã lĩnh khi bùng (k)", list(range(1, 6)), default=list(range(1, 6)), key="pa_paid_counts")
+    all_groups = sorted({(c.paid_count, c.default_ids) for c in phase_a_cases() if c.paid_count in paid})
+    group_map = {_group_label(g): g for g in all_groups}
+    _multi("pa_groups", list(group_map))
+    with st.expander(f"Lọc nhóm bùng ({len(st.session_state.pa_groups)} nhóm đang chọn)"):
+        groups = st.multiselect("Nhóm bùng trong số người đã lĩnh", list(group_map), key="pa_groups")
+    filters = StudyFilters(tuple(rates), *ratio_range, tuple(paid), tuple(group_map[g] for g in groups))
+    filtered = filter_summaries(study, filters)
+    risks = risk_rows(study, filters)
+    if not risks:
+        st.info("Bộ lọc đang rỗng. Chọn ít nhất một mức lãi, số người đã lĩnh và nhóm bùng để xem kết quả.")
+        st.button("Xem diễn biến", disabled=True, key="pa_replay")
+        return
+    metric = st.radio("Chỉ số rủi ro", ("max_individual_loss", "loss_count"), key="pa_metric",
+        format_func=lambda m: "Mất gốc cá nhân lớn nhất (USDC)" if m == "max_individual_loss" else "Số tình huống mất gốc")
+    st.altair_chart(risk_chart(risks, metric), width="stretch")
+    st.caption(ZOOM_NOTE)
+    st.caption(f'{len(filters.groups)} nhóm · {manifest["windows"]} cửa sổ · {sum(r["completed_runs"] for r in risks):,}/{sum(r["expected_runs"] for r in risks):,} runs trong bộ lọc. Số tình huống không phải xác suất, số ngày hay số người.')
+    if any(not r["coverage_complete"] for r in risks):
+        st.warning("Có điểm thiếu coverage: số mất gốc chỉ là lớn nhất quan sát được trên phần đã có, chưa phải bộ đầy đủ.")
+    filtered_provenance = dict(provenance, scope="bộ lọc", filters=asdict(filters))
+    _table_download("Bảng rủi ro đang hiển thị", risks, filtered_provenance, "pa_risk_csv")
+    _reconcile("pa_heat_rate", sorted(rates), .2)
+    heat_rate = st.selectbox("Lãi năm cho bản đồ nhiệt", sorted(rates), key="pa_heat_rate", format_func=lambda r: f"{r:.0%}/năm")
+    heat = heatmap_rows(study, filters, heat_rate)
+    st.altair_chart(heatmap_chart(heat), width="stretch")
+    st.caption("Mỗi ô là mất gốc cá nhân lớn nhất (USDC). Ô xám là thiếu dữ liệu, không phải mất gốc 0. k là số người đã lĩnh, không phải số người bùng.")
+    _table_download("Bảng bản đồ nhiệt", heat, dict(filtered_provenance, heat_rate=heat_rate), "pa_heat_csv")
+    st.subheader("Chạy lại một tình huống")
+    choices = {_case_label(case_key(r)): case_key(r) for r in sorted(filtered, key=case_key)}
+    if not choices:
+        st.info("Không có job hợp lệ cho bộ lọc này; chưa thể chạy lại.")
+        return
+    if st.button("Mở trường hợp tệ nhất", key="pa_worst"):
+        st.session_state.pa_case = _case_label(select_worst(filtered))
+    _reconcile("pa_case", list(choices))
+    label = st.selectbox("Tình huống", list(choices), key="pa_case")
+    key = choices[label]
+    summary = next(r for r in filtered if case_key(r) == key)
+    kind = st.radio("Cửa sổ chạy lại", ("worst_individual", "worst_total", "custom"), key="pa_window_kind",
+        format_func=lambda k: {"worst_individual": "Mất gốc cá nhân tệ nhất", "worst_total": "Mất gốc toàn dây tệ nhất", "custom": "Chọn ngày khác"}[k])
+    if kind == "custom":
+        _reconcile("pa_window_start", identity["window_starts"])
+        start = st.selectbox("Ngày bắt đầu cửa sổ", identity["window_starts"], key="pa_window_start")
+    else:
+        start = summary[f"{kind}_start"]
+        st.caption(f"Ngày bắt đầu: {start}")
+    price_path = Path(csv_path).expanduser().resolve()
+    try:
+        stat = price_path.stat()
+        price_signature = (str(price_path), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        price_signature = (str(price_path), None, None)
+    replay_signature = (study.signature, key, start, price_signature)
+    if st.button("Xem diễn biến", key="pa_replay"):
+        try:
+            replay = replay_case(study, key, start, price_path)
+            st.session_state.pa_replay_result = replay
+            st.session_state.pa_replay_signature = replay_signature
+            st.session_state.pa_frame = 0
+        except (OSError, ValueError) as error:
+            st.session_state.pop("pa_replay_result", None)
+            st.error(f"Không thể chạy lại: {error}")
+    replay = st.session_state.get("pa_replay_result")
+    if replay is not None:
+        if st.session_state.get("pa_replay_signature") != replay_signature:
+            st.info("Chưa chạy lại theo lựa chọn mới. Kết quả cũ đã được ẩn.")
+        else:
+            render_replay(replay)
+            replay_meta = dict(provenance, scope="replay", case_key=key, window_start=start, seed=42,
+                               checks=replay.checks, mismatches=replay.mismatches)
+            _table_download("Bảng kết quả chạy lại", (asdict(replay.run.result),), replay_meta, "pa_replay_csv")
+            _table_download("Bảng trace kỳ chạy lại", trace_rows(replay.run), replay_meta, "pa_trace_csv")

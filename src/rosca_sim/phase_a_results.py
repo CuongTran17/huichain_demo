@@ -3,6 +3,9 @@
 from dataclasses import asdict, dataclass
 from datetime import date
 import hashlib
+import csv
+import json
+from io import StringIO
 from pathlib import Path
 from math import isfinite
 
@@ -262,3 +265,14 @@ def replay_frames(replay: ReplayResult) -> tuple[dict[str, object], ...]:
                    ("settlement", "Quyết toán", replay.run.result.settlement_day, None)))
     return tuple(dict(index=i, kind=kind, label=label, day=day, trace_index=trace)
                  for i, (kind, label, day, trace) in enumerate(frames))
+
+
+def csv_bytes(rows: tuple[dict[str, object], ...], provenance: dict[str, object]) -> bytes:
+    output = StringIO(newline="")
+    merged = [dict(r, **provenance) for r in rows]
+    fields = list(dict.fromkeys(k for r in merged or [provenance] for k in r))
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    writer.writerows({k: json.dumps(v, ensure_ascii=False) if isinstance(v, (tuple, list, dict)) else v
+                     for k, v in r.items()} for r in merged)
+    return output.getvalue().encode("utf-8-sig")

@@ -75,6 +75,13 @@ def _csv_bytes(rows):
     return output.getvalue().encode("utf-8-sig")
 
 
+view = st.radio("Chế độ nghiên cứu", ("So sánh kịch bản", "Quét tự động và tìm ngưỡng", "Kết quả nghiên cứu 2022"),
+                horizontal=True, key="view")
+if view == "Kết quả nghiên cứu 2022":
+    from rosca_sim.web_phase_a import render_phase_a
+    render_phase_a()
+    st.stop()
+
 with st.sidebar:
     st.subheader("Nguồn giá ETH")
     st.text_input("Đường dẫn CSV giá ETH", key="csv_path", placeholder="C:/data/eth_daily.csv")
@@ -82,8 +89,6 @@ with st.sidebar:
     st.selectbox("Đơn vị giá ETH", ("USD", "USDT"), key="quote_asset")
     st.caption("CSV có hai cột date,close theo ngày. Giả định quy đổi: 1 USD hoặc 1 USDT ≈ 1 USDC. Giá đóng cửa không bảo đảm bán ETH được ở mức đó.")
 
-view = st.radio("Chế độ nghiên cứu", ("So sánh kịch bản", "Quét tự động và tìm ngưỡng"),
-                horizontal=True, key="view")
 if view == "Quét tự động và tìm ngưỡng":
     st.subheader("Quét ký quỹ trên cùng cửa sổ ETH")
     st.caption("Mỗi tỷ lệ trong một dây dùng cùng ngày bắt đầu, cùng chào lãi và cùng giả định bùng. Dây dài hoặc ân hạn khác nhau có ngày kết thúc khác nhau.")

@@ -47,3 +47,70 @@ def test_replay_renderer_frame_changes_do_not_simulate(phase_a_copy, monkeypatch
     at.select_slider(key="pa_frame").set_value(3).run()
     assert not at.exception
     assert any("Lãi đã dùng" in x.label for x in at.metric)
+
+
+def study_app(directory, prices):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "src/rosca_sim/web_app.py"), default_timeout=30)
+    at.session_state["view"] = "Kết quả nghiên cứu 2022"
+    at.session_state["pa_results_dir"] = str(directory)
+    at.session_state["pa_prices_csv"] = str(prices)
+    return at.run()
+
+
+def test_new_mode_filters_only_and_explicit_replay_once(phase_a_copy, monkeypatch):
+    from rosca_sim import web_analysis
+    original = web_analysis.AuctionRoscaModel
+    calls = []
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(web_analysis, "AuctionRoscaModel", counted)
+    at = study_app(*phase_a_copy)
+    assert not at.exception
+    assert len(at.get("vega_lite_chart")) >= 3
+    assert any(m.value == "100%" for m in at.metric)
+    assert any("2,280" in m.value for m in at.metric)
+    assert not calls
+    old_cases = at.session_state["cases"]
+    at.multiselect(key="pa_rates").set_value([.2]).run()
+    at.multiselect(key="pa_paid_counts").set_value([1]).run()
+    at.button(key="pa_worst").click().run()
+    assert not at.exception and not calls
+    assert at.session_state["cases"] == old_cases
+    at.button(key="pa_replay").click().run()
+    assert not at.exception
+    assert len(calls) == 1
+    at.select_slider(key="pa_frame").set_value(3).run()
+    assert not at.exception and len(calls) == 1
+    at.multiselect(key="pa_rates").set_value([]).run()
+    assert not at.exception
+    assert not any(s.key == "pa_frame" for s in at.select_slider)
+    assert len(calls) == 1
+
+
+def test_cache_not_false_complete_and_missing_csv_allows_overview(phase_a_copy):
+    from rosca_sim import phase_a
+    directory, prices = phase_a_copy
+    at = study_app(directory, prices.with_name("missing.csv"))
+    assert not at.exception
+    assert any(m.value == "100%" for m in at.metric)
+    phase_a._job_path(directory, 0., .25).unlink()
+    at.run()
+    assert not at.exception
+    assert not any(m.value == "100%" for m in at.metric)
+    assert any("Chưa đủ" in m.value for m in at.metric)
+    at.button(key="pa_replay").click().run()
+    assert at.error and not at.exception
+
+
+def test_csv_export_compound_values_and_empty_header():
+    from rosca_sim.phase_a_results import csv_bytes
+    import csv
+    import io
+    exported = csv_bytes(({"loss": 0.0000000001, "key": (.2, 1., 1, (0,))},), {"scope": "filtered"})
+    row, = list(csv.DictReader(io.StringIO(exported.decode("utf-8-sig"))))
+    assert row["scope"] == "filtered" and row["loss"] == "1e-10"
+    assert json.loads(row["key"]) == [.2, 1., 1, [0]]
+    assert csv_bytes((), {"scope": "empty"}).decode("utf-8-sig").strip() == "scope"
