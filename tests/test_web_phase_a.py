@@ -82,6 +82,11 @@ def test_new_mode_filters_only_and_explicit_replay_once(phase_a_copy, monkeypatc
     at.button(key="pa_replay").click().run()
     assert not at.exception
     assert len(calls) == 1
+    assert any(x.label == "Bảng giá ETH theo ngày và sự kiện" for x in at.expander)
+    prices_table = next(x.value for x in at.dataframe if "price" in x.value.columns)
+    assert len(prices_table) == 158
+    assert prices_table.iloc[0]["price"] == 2000.
+    assert prices_table.iloc[1]["events"] == "Đóng băng; Bán ETH Người 1"
     at.select_slider(key="pa_frame").set_value(3).run()
     assert not at.exception and len(calls) == 1
     at.multiselect(key="pa_rates").set_value([]).run()
@@ -114,3 +119,51 @@ def test_csv_export_compound_values_and_empty_header():
     assert row["scope"] == "filtered" and row["loss"] == "1e-10"
     assert json.loads(row["key"]) == [.2, 1., 1, [0]]
     assert csv_bytes((), {"scope": "empty"}).decode("utf-8-sig").strip() == "scope"
+
+
+def test_cached_hit_changed_between_signature_and_lookup_is_rejected(phase_a_copy, monkeypatch):
+    from rosca_sim import phase_a
+    module = web()
+    directory, prices = phase_a_copy
+    at = study_app(directory, prices)
+    assert not at.exception
+    original = module._cached_study
+    def change_before_cached_lookup(path, signature):
+        phase_a._job_path(directory, 0., .25).unlink()
+        return original(path, signature)
+    monkeypatch.setattr(module, "_cached_study", change_before_cached_lookup)
+    at.run()
+    assert not at.exception
+    assert at.error
+    assert not at.metric
+
+
+def test_old_source_settings_survive_round_trip_to_new_mode(phase_a_copy):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "src/rosca_sim/web_app.py"), default_timeout=30).run()
+    at.text_input(key="csv_path").set_value(str(phase_a_copy[1]))
+    at.text_input(key="source_label").set_value("my retained local source")
+    at.selectbox(key="quote_asset").set_value("USDT").run()
+    at.session_state["pa_results_dir"] = str(phase_a_copy[0])
+    at.radio(key="view").set_value("Kết quả nghiên cứu 2022").run()
+    assert not at.exception
+    at.radio(key="view").set_value("So sánh kịch bản").run()
+    assert not at.exception
+    assert at.text_input(key="csv_path").value == str(phase_a_copy[1])
+    assert at.text_input(key="source_label").value == "my retained local source"
+    assert at.selectbox(key="quote_asset").value == "USDT"
+
+
+def test_heatmap_labels_do_not_hide_cent_loss():
+    chart = web().heatmap_chart((dict(annual_rate=.2, ratio=1., k=1, max_individual_loss=.01,
+        coverage_complete=True, worst_key=None, worst_start=None, completed_runs=1, expected_runs=1),)).to_dict()
+    assert chart["layer"][1]["encoding"]["text"]["format"] == ".2f"
+
+
+def test_dense_heatmap_does_not_overlay_unreadable_currency_labels():
+    rows = tuple(dict(annual_rate=.2, ratio=i/20, k=1, max_individual_loss=123.45,
+        coverage_complete=True, worst_key=None, worst_start=None, completed_runs=1, expected_runs=1)
+        for i in range(5, 41))
+    chart = web().heatmap_chart(rows).to_dict()
+    assert chart["layer"][1].get("transform") == [{"filter": "false"}]

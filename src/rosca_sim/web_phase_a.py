@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 from dataclasses import asdict
 from pathlib import Path
+from datetime import date, timedelta
 import json
 
 from rosca_sim.phase_a import ANNUAL_RATES, phase_a_cases
@@ -70,8 +71,24 @@ def heatmap_chart(rows) -> alt.LayerChart:
             "worst_start:N", "completed_runs:Q", "expected_runs:Q", "status:N"])
     tiles = base.mark_rect().encode(color=alt.condition("datum.max_individual_loss == null",
         alt.value("#cccccc"), alt.Color("max_individual_loss:Q", title="USDC", scale=alt.Scale(scheme="oranges", zero=True))))
-    labels = base.mark_text(fontSize=12).encode(text=alt.Text("max_individual_loss:Q", format=".1f"))
+    # Dense grids use the legend, raw tooltip and table instead of overlapping amounts.
+    labels = base.transform_filter("true" if len({r["ratio"] for r in rows}) <= 12 else "false").mark_text(fontSize=12).encode(
+        text=alt.Text("max_individual_loss:Q", format=".2f"))
     return (tiles + labels).properties(height=240)
+
+
+def _price_event_rows(replay):
+    events = {}
+    for frame in replay_frames(replay):
+        if frame["kind"] != "initial":
+            events.setdefault(frame["day"], []).append(frame["label"])
+    for member in replay.run.result.agent_results:
+        if member.eth_sale_day is not None:
+            events.setdefault(member.eth_sale_day, []).append(f"Bán ETH {member_label(member.member_id)}")
+    start = date.fromisoformat(replay.run.price_path.start_date)
+    return tuple(dict(day=i, date=(start + timedelta(days=i)).isoformat(), price=price,
+                      events="; ".join(events.get(i, ())))
+                 for i, price in enumerate(replay.run.price_path.daily_prices))
 
 
 def render_replay(replay) -> None:
@@ -89,13 +106,12 @@ def render_replay(replay) -> None:
         st.success(f"Khớp {len(replay.checks)} phép đối chiếu với checkpoint đã lưu.")
     else:
         st.info("Cửa sổ tùy chọn: không có benchmark riêng đã lưu để xác nhận tái lập.")
-    events = [dict(day=f["day"], event=f["label"]) for f in frames if f["kind"] != "initial"]
-    events.extend(dict(day=a.eth_sale_day, event=f"Bán ETH {member_label(a.member_id)}")
-                  for a in run.result.agent_results if a.eth_sale_day is not None)
-    price = alt.Chart(pd.DataFrame(dict(day=i, price=p) for i, p in enumerate(run.price_path.daily_prices))).mark_line().encode(
+    price_rows = _price_event_rows(replay)
+    events = [r for r in price_rows if r["events"]]
+    price = alt.Chart(pd.DataFrame(price_rows)).mark_line().encode(
         x=alt.X("day:Q", title="Ngày từ lúc bắt đầu"), y=alt.Y("price:Q", title=f"{run.quote_asset}/ETH", scale=alt.Scale(zero=False)),
-        tooltip=["day:Q", "price:Q"])
-    rules = alt.Chart(pd.DataFrame(events)).mark_rule(strokeDash=[4, 4], color="#927343").encode(x="day:Q", tooltip=["day:Q", "event:N"])
+        tooltip=["day:Q", "date:N", "price:Q", "events:N"])
+    rules = alt.Chart(pd.DataFrame(events)).mark_rule(strokeDash=[4, 4], color="#927343").encode(x="day:Q", tooltip=["day:Q", "date:N", "events:N"])
     cursor = alt.Chart(pd.DataFrame([frame])).mark_rule(color="#315b7c").encode(x="day:Q")
     st.altair_chart((price + rules + cursor).properties(height=240), width="stretch")
     st.caption("Giá đóng cửa, không phải giá khớp lệnh. Đường sự kiện cho biết lĩnh, đóng băng, bán ETH và quyết toán.")
@@ -171,6 +187,8 @@ def _case_label(key):
 
 
 def render_phase_a() -> None:
+    st.markdown('<style>[data-testid="stSliderThumbValue"] {width:max-content; white-space:nowrap;} '
+                '[data-testid="stSliderThumbValue"] p {white-space:nowrap;}</style>', unsafe_allow_html=True)
     root = Path(__file__).resolve().parents[2]
     with st.sidebar:
         st.subheader("Nguồn nghiên cứu 2022")
@@ -187,6 +205,9 @@ def render_phase_a() -> None:
     try:
         signature = study_signature(Path(directory))
         study = _cached_study(directory, signature)
+        # Cache hits skip the decorated body: verify stability outside the cache too.
+        if study_signature(Path(directory)) != signature:
+            raise ValueError("source changed; reload study")
     except (ValueError, OSError) as error:
         loading.empty()
         st.error(f"Không thể đọc nghiên cứu: {error}")
@@ -247,6 +268,7 @@ def render_phase_a() -> None:
     heat = heatmap_rows(study, filters, heat_rate)
     st.altair_chart(heatmap_chart(heat), width="stretch")
     st.caption("Mỗi ô là mất gốc cá nhân lớn nhất (USDC). Ô xám là thiếu dữ liệu, không phải mất gốc 0. k là số người đã lĩnh, không phải số người bùng.")
+    st.caption("Lưới nhiều tỷ lệ ẩn chữ trong ô để tránh chồng lấn; xem giá trị chính xác qua tooltip hoặc bảng bên dưới.")
     _table_download("Bảng bản đồ nhiệt", heat, dict(filtered_provenance, heat_rate=heat_rate), "pa_heat_csv")
     st.subheader("Chạy lại một tình huống")
     choices = {_case_label(case_key(r)): case_key(r) for r in sorted(filtered, key=case_key)}
@@ -291,5 +313,7 @@ def render_phase_a() -> None:
             render_replay(replay)
             replay_meta = dict(provenance, scope="replay", case_key=key, window_start=start, seed=42,
                                checks=replay.checks, mismatches=replay.mismatches)
+            _table_download("Bảng giá ETH theo ngày và sự kiện", _price_event_rows(replay),
+                            replay_meta, "pa_price_events_csv")
             _table_download("Bảng kết quả chạy lại", (asdict(replay.run.result),), replay_meta, "pa_replay_csv")
             _table_download("Bảng trace kỳ chạy lại", trace_rows(replay.run), replay_meta, "pa_trace_csv")

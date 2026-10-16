@@ -78,6 +78,10 @@ def _csv_bytes(rows):
 view = st.radio("Chế độ nghiên cứu", ("So sánh kịch bản", "Quét tự động và tìm ngưỡng", "Kết quả nghiên cứu 2022"),
                 horizontal=True, key="view")
 if view == "Kết quả nghiên cứu 2022":
+    # Detach hidden legacy inputs from widget cleanup while this mode is active.
+    for source_key in ("csv_path", "source_label", "quote_asset"):
+        if source_key in st.session_state:
+            st.session_state[source_key] = st.session_state[source_key]
     from rosca_sim.web_phase_a import render_phase_a
     render_phase_a()
     st.stop()
