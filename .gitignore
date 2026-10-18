@@ -1,0 +1,11 @@
+node_modules/
+demo/node_modules/
+demo/artifacts/
+demo/cache/
+demo/dist/
+demo/dist-classroom/
+demo/.runtime/
+.superpowers/
+.env
+.env.*
+!.env.example

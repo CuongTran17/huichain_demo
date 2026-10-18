@@ -1,0 +1,33 @@
+{
+  "name": "hui-chain-classroom",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.classroom.config.ts",
+    "build": "npm run typecheck && vite build --config vite.classroom.config.ts",
+    "test:unit": "tsx --test test/*.test.ts",
+    "check:route": "tsx scripts/check-route.ts",
+    "build:contracts": "tsx scripts/compile-solc.ts",
+    "export:abi": "npm run build:contracts && tsx scripts/export-abi.ts",
+    "test:contract": "npm run build:contracts && node --import ./scripts/local-hardhat-cache.mjs ./node_modules/hardhat/dist/src/cli.js test --no-compile",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.6.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "viem": "2.57.7"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox-viem": "5.0.7",
+    "@types/node": "22.15.30",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "hardhat": "3.20.0",
+    "solc": "0.8.28",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite": "8.3.4"
+  }
+}
