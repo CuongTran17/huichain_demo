@@ -54,7 +54,7 @@ ABM sáu người dùng các cửa sổ giá ETH lịch sử và kỳ góp 30 ng
 
 ## Đưa frontend lên Vercel khi có repo GitHub mới
 
-Trong Vercel chọn **Root Directory = `demo`**, Framework = Vite, Install = `npm ci`, Build = `npm run build`, Output = `dist`. Ba Environment Variables **công khai** là `VITE_WIRE_ADDRESS`, `VITE_DEPLOY_BLOCK`, `VITE_SEPOLIA_RPC_URL`. Chỉ đổi hai giá trị địa chỉ/block sang contract sáu người **sau** khi diễn tập với sáu ví và kiểm tra bảng chiếu; không trỏ frontend sáu người vào contract năm người. Vercel chỉ phục vụ file tĩnh; không triển khai backend hoặc bot. Không đặt private key hay RPC key bí mật vào biến `VITE_`.
+Trong Vercel chọn **Root Directory = `demo`**, Framework = Vite, Install = `npm ci`, Build = `npm run build`, Output = `dist`. Ba Environment Variables **công khai** là `VITE_WIRE_ADDRESS`, `VITE_DEPLOY_BLOCK`, `VITE_SEPOLIA_RPC_URL`. Bản build sáu người **từ chối** địa chỉ contract năm người cũ. Để site đang chạy không bị gián đoạn, giữ bản frontend năm người đang phục vụ địa chỉ cũ, diễn tập bản sáu người ở môi trường riêng; chỉ đổi bản build và địa chỉ/block sang contract sáu người **cùng một đợt** sau khi kiểm tra sáu ví và bảng chiếu. Vercel chỉ phục vụ file tĩnh; không triển khai backend hoặc bot. Không đặt private key hay RPC key bí mật vào biến `VITE_`.
 
 ## Diễn tập trong lớp
 
