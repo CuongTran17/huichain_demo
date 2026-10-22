@@ -16,10 +16,10 @@ contract RoscaClassroom is ReentrancyGuard {
     enum LiquidationMode { ExactDebt, AllCollateral }
 
     uint256 public constant CONTRIBUTION = 100_000_000;
-    uint256 public constant POT = 500_000_000;
+    uint256 public constant POT = 600_000_000;
     uint256 public constant WINDOW = 300;
     uint256 public constant GRACE = 300;
-    uint8 private constant NO_CANDIDATE = 5;
+    uint8 private constant NO_CANDIDATE = 6;
 
     struct MemberView {
         address account;
@@ -72,14 +72,14 @@ contract RoscaClassroom is ReentrancyGuard {
     address public immutable weth;
     uint32 public immutable collateralRatioBps;
     address public immutable host;
-    address[5] public members;
+    address[6] public members;
     uint8 public memberCount;
     mapping(address => uint8) public memberIdPlusOne;
     mapping(address => bool) public requested;
-    MemberView[5] private records;
+    MemberView[6] private records;
     StateView private state;
     uint8 private triedMask;
-    uint8[5] private contributionsByPeriod;
+    uint8[6] private contributionsByPeriod;
     bool private claimedThisPeriod;
     bool public settlementFinalized;
 
@@ -117,7 +117,7 @@ contract RoscaClassroom is ReentrancyGuard {
 
     function getState() external view returns (StateView memory) { return state; }
     function getMember(uint8 id) external view returns (MemberView memory) {
-        if (id >= 5) revert InvalidMember();
+        if (id >= 6) revert InvalidMember();
         return records[id];
     }
     function memberId() external view returns (uint8) { return _memberId(msg.sender); }
@@ -141,7 +141,7 @@ contract RoscaClassroom is ReentrancyGuard {
     }
 
     function approveJoin(address account) external onlyHost {
-        if (state.phase != Phase.Joining || !requested[account] || memberCount == 5 || memberIdPlusOne[account] != 0) revert InvalidAction();
+        if (state.phase != Phase.Joining || !requested[account] || memberCount == 6 || memberIdPlusOne[account] != 0) revert InvalidAction();
         uint8 id = memberCount++;
         members[id] = account;
         memberIdPlusOne[account] = id + 1;
@@ -151,7 +151,7 @@ contract RoscaClassroom is ReentrancyGuard {
     }
 
     function start() external onlyHost {
-        if (state.phase != Phase.Joining || memberCount != 5) revert InvalidAction();
+        if (state.phase != Phase.Joining || memberCount != 6) revert InvalidAction();
         _setPhase(Phase.Contributing);
     }
 
@@ -182,7 +182,7 @@ contract RoscaClassroom is ReentrancyGuard {
 
     function _nextCandidate() private view returns (uint8 best) {
         best = NO_CANDIDATE;
-        for (uint8 i; i < 5; ++i) {
+        for (uint8 i; i < 6; ++i) {
             MemberView storage member = records[i];
             if (member.received || !member.bidSubmitted || triedMask & (1 << i) != 0) continue;
             if (best == NO_CANDIDATE || member.annualBps > records[best].annualBps) best = i;
@@ -199,7 +199,7 @@ contract RoscaClassroom is ReentrancyGuard {
     function advance() external onlyHost {
         if (state.phase == Phase.Contributing) {
             uint8 missing;
-            for (uint8 i; i < 5; ++i) if (!records[i].contributedThisPeriod) missing |= uint8(1 << i);
+            for (uint8 i; i < 6; ++i) if (!records[i].contributedThisPeriod) missing |= uint8(1 << i);
             if (missing != 0) {
                 if (block.timestamp < state.deadline) revert InvalidAction();
                 _freeze(missing, FreezeReason.MissedContribution);
@@ -208,14 +208,14 @@ contract RoscaClassroom is ReentrancyGuard {
             }
         } else if (state.phase == Phase.Bidding) {
             bool all = true;
-            for (uint8 i; i < 5; ++i) if (!records[i].received && !records[i].bidSubmitted) all = false;
+            for (uint8 i; i < 6; ++i) if (!records[i].received && !records[i].bidSubmitted) all = false;
             if (!all && block.timestamp < state.deadline) revert InvalidAction();
             state.currentCandidate = _nextCandidate();
             if (state.currentCandidate == NO_CANDIDATE) _freeze(0, FreezeReason.NoEligible);
             else _setPhase(Phase.Claiming);
         } else if (state.phase == Phase.Claiming) {
             if (claimedThisPeriod) {
-                if (state.period == 4) {
+                if (state.period == 5) {
                     state.phase = Phase.Completed;
                     state.deadline = 0;
                     emit PhaseChanged(Phase.Completed, state.period, 0);
@@ -224,7 +224,7 @@ contract RoscaClassroom is ReentrancyGuard {
                     triedMask = 0;
                     claimedThisPeriod = false;
                     state.currentCandidate = NO_CANDIDATE;
-                    for (uint8 i; i < 5; ++i) {
+                    for (uint8 i; i < 6; ++i) {
                         records[i].contributedThisPeriod = false;
                         records[i].bidSubmitted = false;
                         records[i].annualBps = 0;
@@ -242,8 +242,8 @@ contract RoscaClassroom is ReentrancyGuard {
     }
 
     function requiredCollateral() public view returns (uint256) {
-        if (state.phase != Phase.Claiming || claimedThisPeriod || state.currentCandidate >= 5) revert InvalidAction();
-        uint256 debt = uint256(4 - state.period) * CONTRIBUTION;
+        if (state.phase != Phase.Claiming || claimedThisPeriod || state.currentCandidate >= 6) revert InvalidAction();
+        uint256 debt = uint256(5 - state.period) * CONTRIBUTION;
         (uint112 reserveUsdc, uint112 reserveWeth) = UniswapV2Route.reserves(address(usdc), pair);
         return RoscaMath.collateralWei(debt, collateralRatioBps, reserveUsdc, reserveWeth);
     }
@@ -254,8 +254,8 @@ contract RoscaClassroom is ReentrancyGuard {
         if (id != state.currentCandidate) revert InvalidAction();
         uint256 needed = requiredCollateral();
         if (msg.value != needed) revert WrongEth(needed);
-        uint256 debt = uint256(4 - state.period) * CONTRIBUTION;
-        uint256 interest = RoscaMath.annualInterest(debt, records[id].annualBps, uint16((4 - state.period) * 30));
+        uint256 debt = uint256(5 - state.period) * CONTRIBUTION;
+        uint256 interest = RoscaMath.annualInterest(debt, records[id].annualBps, uint16((5 - state.period) * 30));
         uint256 net = POT - interest;
         claimedThisPeriod = true;
         records[id].received = true;
@@ -293,7 +293,7 @@ contract RoscaClassroom is ReentrancyGuard {
     }
 
     function previewLiquidation(uint8 id) public view returns (LiquidationQuote memory quote) {
-        if (state.phase != Phase.Settling || id >= 5) revert InvalidAction();
+        if (state.phase != Phase.Settling || id >= 6) revert InvalidAction();
         MemberView storage member = records[id];
         if (!member.received || member.liquidationProcessed || member.remainingDebt == 0 || member.lockedEth == 0) revert InvalidAction();
         if (state.triggerMask & uint8(1 << id) == 0 && block.timestamp < state.deadline) revert InvalidAction();
@@ -344,10 +344,10 @@ contract RoscaClassroom is ReentrancyGuard {
         emit CollateralSold(id, sold, recovered, member.remainingDebt);
     }
 
-    function _interestWeights() private view returns (uint256[5] memory weights) {
-        uint256[5] memory fallbackWeights;
+    function _interestWeights() private view returns (uint256[6] memory weights) {
+        uint256[6] memory fallbackWeights;
         uint256 totalWait;
-        for (uint8 i; i < 5; ++i) {
+        for (uint8 i; i < 6; ++i) {
             if (state.triggerMask & uint8(1 << i) != 0) continue;
             uint8 cutoff = records[i].received ? records[i].payoutPeriod : state.period;
             for (uint8 period; period <= cutoff; ++period) {
@@ -363,14 +363,14 @@ contract RoscaClassroom is ReentrancyGuard {
 
     function finalizeSettlement() external onlyHost nonReentrant {
         if (settlementFinalized || (state.phase != Phase.Settling && state.phase != Phase.Completed)) revert InvalidAction();
-        for (uint8 i; i < 5; ++i) {
+        for (uint8 i; i < 6; ++i) {
             if (records[i].received && records[i].remainingDebt > 0 && !records[i].liquidationProcessed) revert InvalidAction();
         }
         uint256 cash = usdc.balanceOf(address(this));
         uint256 principalTarget;
         uint256 defaultInterest;
-        uint256[5] memory principalWeights;
-        for (uint8 i; i < 5; ++i) {
+        uint256[6] memory principalWeights;
+        for (uint8 i; i < 6; ++i) {
             if (!records[i].received) {
                 principalWeights[i] = records[i].totalContributed;
                 principalTarget += principalWeights[i];
@@ -384,19 +384,19 @@ contract RoscaClassroom is ReentrancyGuard {
         state.usedInterest = gapBeforeInterest < state.retainedInterest ? gapBeforeInterest : state.retainedInterest;
         state.defaultInterestUsed = state.usedInterest < defaultInterest ? state.usedInterest : defaultInterest;
         state.commonInterestUsed = state.usedInterest - state.defaultInterestUsed;
-        uint256[5] memory principalShares = RoscaMath.allocate(principalPaid, principalWeights);
+        uint256[6] memory principalShares = RoscaMath.allocate(principalPaid, principalWeights);
         uint256 surplus = cash - principalPaid;
-        uint256[5] memory interestShares;
-        uint256[5] memory weights = _interestWeights();
+        uint256[6] memory interestShares;
+        uint256[6] memory weights = _interestWeights();
         uint256 eligibleWeight;
-        for (uint8 i; i < 5; ++i) eligibleWeight += weights[i];
+        for (uint8 i; i < 6; ++i) eligibleWeight += weights[i];
         if (eligibleWeight == 0) state.unallocatedUsdc = surplus;
         else {
             interestShares = RoscaMath.allocate(surplus, weights);
             state.distributedInterest = surplus;
         }
         uint256 allocated;
-        for (uint8 i; i < 5; ++i) {
+        for (uint8 i; i < 6; ++i) {
             MemberView storage member = records[i];
             member.principalAllocated = principalShares[i];
             member.interestAllocated = interestShares[i];

@@ -36,6 +36,13 @@ describe("RoscaMath", () => {
     assert.deepEqual(await math.read.allocate([100n, [0n, 1n, 2n, 0n, 0n]]), [0n, 33n, 67n, 0n, 0n]);
   });
 
+  it("allocates six-way remainders exactly and accepts all-zero weights only for zero cash", async () => {
+    const math = await viem.deployContract("MathHarness");
+    assert.deepEqual(await math.read.allocateSix([8n, [1n, 1n, 1n, 1n, 1n, 1n]]), [2n, 2n, 1n, 1n, 1n, 1n]);
+    assert.deepEqual(await math.read.allocateSix([0n, [0n, 0n, 0n, 0n, 0n, 0n]]), [0n, 0n, 0n, 0n, 0n, 0n]);
+    await assert.rejects(math.read.allocateSix([1n, [0n, 0n, 0n, 0n, 0n, 0n]]));
+  });
+
   it("rejects rate, ratio and reserve values outside valid bounds", async () => {
     const math = await viem.deployContract("MathHarness");
     await assert.rejects(math.read.annualInterest([400_000_000n, 2001, 120]));

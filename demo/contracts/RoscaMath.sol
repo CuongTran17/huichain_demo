@@ -43,4 +43,28 @@ library RoscaMath {
             remainders[best] = 0;
         }
     }
+
+    function allocate(uint256 total, uint256[6] memory weights) internal pure returns (uint256[6] memory shares) {
+        uint256 sum;
+        for (uint256 i; i < 6; ++i) sum += weights[i];
+        if (sum == 0) {
+            if (total != 0) revert EmptyWeights();
+            return shares;
+        }
+        uint256 allocated;
+        uint256[6] memory remainders;
+        for (uint256 i; i < 6; ++i) {
+            shares[i] = Math.mulDiv(total, weights[i], sum);
+            remainders[i] = mulmod(total, weights[i], sum);
+            allocated += shares[i];
+        }
+        for (uint256 extra = total - allocated; extra > 0; --extra) {
+            uint256 best = 6;
+            for (uint256 i; i < 6; ++i) {
+                if (weights[i] > 0 && (best == 6 || remainders[i] > remainders[best])) best = i;
+            }
+            shares[best]++;
+            remainders[best] = 0;
+        }
+    }
 }

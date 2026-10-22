@@ -15,4 +15,8 @@ contract MathHarness {
     function allocate(uint256 total, uint256[5] calldata weights) external pure returns (uint256[5] memory) {
         return RoscaMath.allocate(total, weights);
     }
+
+    function allocateSix(uint256 total, uint256[6] calldata weights) external pure returns (uint256[6] memory) {
+        return RoscaMath.allocate(total, weights);
+    }
 }
