@@ -5,6 +5,12 @@ import hre from "hardhat";
 const { viem } = await hre.network.create();
 
 describe("RoscaMath", () => {
+  it("accepts the six-member first claim's 150-day interest and rejects 151 days", async () => {
+    const math = await viem.deployContract("MathHarness");
+    assert.equal(await math.read.annualInterest([500_000_000n, 2000, 150]), 41_095_890n);
+    await assert.rejects(math.read.annualInterest([500_000_000n, 2000, 151]));
+    await assert.rejects(math.read.annualInterest([500_000_000n, 2001, 150]));
+  });
   it("first bid at 20 percent keeps 26.301369 USDC", async () => {
     const math = await viem.deployContract("MathHarness");
     const interest = await math.read.annualInterest([400_000_000n, 2000, 120]);
@@ -33,7 +39,7 @@ describe("RoscaMath", () => {
   it("rejects rate, ratio and reserve values outside valid bounds", async () => {
     const math = await viem.deployContract("MathHarness");
     await assert.rejects(math.read.annualInterest([400_000_000n, 2001, 120]));
-    await assert.rejects(math.read.annualInterest([400_000_000n, 2000, 121]));
+    await assert.rejects(math.read.annualInterest([400_000_000n, 2000, 151]));
     await assert.rejects(math.read.collateralWei([400_000_000n, 0, 2_000_000_000n, 10n ** 18n]));
     await assert.rejects(math.read.collateralWei([400_000_000n, 100001, 2_000_000_000n, 10n ** 18n]));
     await assert.rejects(math.read.collateralWei([400_000_000n, 10000, 0n, 10n ** 18n]));

@@ -9,7 +9,7 @@ library RoscaMath {
     error EmptyWeights();
 
     function annualInterest(uint256 obligation, uint16 annualBps, uint16 daysRemaining) internal pure returns (uint256) {
-        if (annualBps > 2000 || daysRemaining > 120) revert InvalidBid();
+        if (annualBps > 2000 || daysRemaining > 150) revert InvalidBid();
         return Math.mulDiv(obligation, uint256(annualBps) * daysRemaining, 10000 * 365);
     }
 
