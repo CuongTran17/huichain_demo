@@ -4,9 +4,10 @@ import { sepolia } from "viem/chains";
 import { parseClassroomConfig } from "./config.js";
 import { readClassroomSnapshot, type ClassroomSnapshot } from "./chain.js";
 import { approveApplicant, approveRepay, assertWalletContext, connectWallet, sendAction, type Provider } from "./wallet.js";
-import { phaseNames, type Action } from "./model.js";
+import { MEMBER_COUNT, phaseNames, type Action } from "./model.js";
 import { Player } from "./Player.js";
 import { Display } from "./Display.js";
+import { WalletNav } from "./WalletNav.js";
 
 declare global { interface Window { ethereum?: Provider } }
 
@@ -60,6 +61,12 @@ export function App() {
     } catch (error) { setConnectError(String(error)); }
   }
 
+  function disconnect() {
+    setAccount(undefined);
+    setTx(undefined);
+    setConnectError("");
+  }
+
   async function execute(label: string, operation: () => Promise<`0x${string}`>) {
     if (!client || !account || readError) return;
     setTx({ stage: "signing", message: `Đang chờ ví ký: ${label}` });
@@ -78,7 +85,7 @@ export function App() {
 
   function run(action: Action, options?: { bidBps?: number; memberId?: number }) {
     if (!window.ethereum || !client || !snapshot || !config || !account) return;
-    const labels: Record<Action, string> = { request: "Xin tham gia", approve: "Cấp quyền 500 USDC", start: "Bắt đầu dây",
+    const labels: Record<Action, string> = { request: "Xin tham gia", approve: "Cấp quyền 600 USDC", start: "Bắt đầu dây",
       advance: "Chuyển bước", contribute: "Góp 100 USDC", bid: "Chào lãi", claim: "Lĩnh hụi và khóa ETH",
       repay: "Trả nghĩa vụ USDC", liquidate: "Bán ETH ký quỹ", finalize: "Chốt quyết toán",
       withdrawUsdc: "Rút USDC", withdrawEth: "Nhận lại ETH" };
@@ -100,7 +107,7 @@ export function App() {
     <header className="site-header">
       <a className="brand" href="/" aria-label="Hụi Chain, về trang người chơi"><span className="brand-mark">PTIT</span><span>Hụi Chain <small>SEPOLIA · LỚP HỌC</small></span></a>
       <nav aria-label="Chế độ xem"><a className={!isDisplay ? "active" : ""} href="/">Người chơi</a><a className={isDisplay ? "active" : ""} href="/display">Bảng chiếu</a></nav>
-      {!isDisplay && <div className="wallet-nav">{account ? <span title={account}>Ví {account.slice(0, 6)}…{account.slice(-4)}</span> : <button onClick={() => void connect()}>Kết nối ví</button>}</div>}
+      {!isDisplay && <WalletNav account={account} pending={tx?.stage === "signing" || tx?.stage === "submitted"} onConnect={() => void connect()} onDisconnect={disconnect} />}
     </header>
     <main id="main" className={isDisplay ? "display-shell" : "page-shell"}>
       {!config && <section className="notice error"><h1>Chưa cấu hình dây hụi</h1><p>{configError}</p><p>Người tổ chức cần đặt địa chỉ contract, block triển khai và RPC Sepolia trước khi chia sẻ liên kết.</p></section>}
@@ -109,7 +116,7 @@ export function App() {
         {connectError && !isDisplay && <div className="notice error" role="alert">{connectError}</div>}
         {!snapshot && !readError && <div className="skeleton"><div /><div /><div /></div>}
         {snapshot && <>
-          <div className="status-line"><span className="status-pill">Kỳ {snapshot.state.period + 1} / 5 · {phaseNames[snapshot.state.phase]}</span><span>Block xác minh: {snapshot.blockNumber.toString()}</span><span>{snapshot.state.deadline > 0n ? `Hạn: ${Math.max(0, Number(snapshot.state.deadline - now))} giây` : "Không có hạn đang chạy"}</span></div>
+          <div className="status-line"><span className="status-pill">Kỳ {snapshot.state.period + 1} / {MEMBER_COUNT} · {phaseNames[snapshot.state.phase]}</span><span>Block xác minh: {snapshot.blockNumber.toString()}</span><span>{snapshot.state.deadline > 0n ? `Hạn: ${Math.max(0, Number(snapshot.state.deadline - now))} giây` : "Không có hạn đang chạy"}</span></div>
           {isDisplay ? <Display snapshot={snapshot} now={now} stale={Boolean(readError)} /> : <Player snapshot={snapshot} account={account} now={now} stale={Boolean(readError)} tx={tx} run={run} admit={admit} approveRepay={repayApproval} connect={connect} />}
         </>}
       </>}

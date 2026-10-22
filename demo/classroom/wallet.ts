@@ -2,7 +2,7 @@ import { encodeFunctionData, toHex, type Address, type PublicClient } from "viem
 import { classroomAbi } from "../shared/classroom-abi.js";
 import { SEPOLIA, USDC } from "../shared/config.js";
 import { readClassroomSnapshot, tokenAbi, type ClassroomSnapshot } from "./chain.js";
-import { availableActions, memberIndex, type Action } from "./model.js";
+import { availableActions, FULL_WIRE_ALLOWANCE, MEMBER_COUNT, memberIndex, type Action } from "./model.js";
 
 export type Provider = { request(args: { method: string; params?: unknown[] }): Promise<unknown>;
   on?(event: string, listener: (...args: unknown[]) => void): void;
@@ -36,7 +36,7 @@ export async function sendAction(provider: Provider, client: PublicClient, snaps
   let value = 0n;
   if (action === "approve") {
     to = USDC;
-    data = encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [fresh.wire, 500_000_000n] });
+    data = encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [fresh.wire, FULL_WIRE_ALLOWANCE] });
   } else {
     let name: "requestJoin" | "start" | "advance" | "contribute" | "bid" | "claimPayout" | "repay" | "liquidate" | "finalizeSettlement" | "withdrawUsdc" | "withdrawEth";
     let args: readonly unknown[] = [];
@@ -85,7 +85,7 @@ export async function approveApplicant(provider: Provider, client: PublicClient,
   deployBlock: bigint, account: Address, applicant: Address): Promise<`0x${string}`> {
   await assertWalletContext(provider, account);
   const fresh = await readClassroomSnapshot(client, snapshot.wire, deployBlock);
-  if (fresh.state.phase !== 0 || fresh.memberCount >= 5 || account.toLowerCase() !== fresh.host.toLowerCase() ||
+  if (fresh.state.phase !== 0 || fresh.memberCount >= MEMBER_COUNT || account.toLowerCase() !== fresh.host.toLowerCase() ||
     !fresh.applicants.some(value => value.toLowerCase() === applicant.toLowerCase())) throw new Error("Yêu cầu tham gia không còn hợp lệ.");
   const data = encodeFunctionData({ abi: classroomAbi, functionName: "approveJoin", args: [applicant] });
   await client.call({ account, to: fresh.wire, data });

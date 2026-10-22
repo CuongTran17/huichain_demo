@@ -2,6 +2,10 @@ import type { Address } from "viem";
 import type { ClassroomSnapshot } from "./chain.js";
 
 export type Action = "request" | "approve" | "start" | "advance" | "contribute" | "bid" | "claim" | "repay" | "liquidate" | "finalize" | "withdrawUsdc" | "withdrawEth";
+export const MEMBER_COUNT = 6;
+export const CONTRIBUTION = 100_000_000n;
+export const GROSS_POT = BigInt(MEMBER_COUNT) * CONTRIBUTION;
+export const FULL_WIRE_ALLOWANCE = GROSS_POT;
 export const phaseNames = ["Phòng chờ", "Góp USDC", "Chào lãi", "Lĩnh hụi", "Quyết toán", "Hoàn thành", "Đã quyết toán"] as const;
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
@@ -19,8 +23,8 @@ export function availableActions(snapshot: ClassroomSnapshot, account?: Address,
   const actions: Action[] = [];
   if (state.phase === 0) {
     if (!member && !snapshot.applicants.some(a => same(a, account))) actions.push("request");
-    if (member && snapshot.readiness[id].allowance < 500_000_000n) actions.push("approve");
-    if (host && snapshot.memberCount === 5) actions.push("start");
+    if (member && snapshot.readiness[id].allowance < FULL_WIRE_ALLOWANCE) actions.push("approve");
+    if (host && snapshot.memberCount === MEMBER_COUNT) actions.push("start");
   }
   if (state.phase === 1) {
     if (member && !member.contributedThisPeriod && before) actions.push("contribute");
@@ -55,4 +59,11 @@ export function micro(value: bigint): string {
 
 export function bidInterest(debt: bigint, bps: number, days: number): bigint {
   return debt * BigInt(bps) * BigInt(days) / (10_000n * 365n);
+}
+
+export function claimPreview(period: number, annualBps: number) {
+  const remaining = MEMBER_COUNT - 1 - period;
+  const debt = BigInt(remaining) * CONTRIBUTION;
+  const interest = bidInterest(debt, annualBps, remaining * 30);
+  return { debt, interest, net: GROSS_POT - interest };
 }

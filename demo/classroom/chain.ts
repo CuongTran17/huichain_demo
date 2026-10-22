@@ -1,6 +1,7 @@
 import { decodeEventLog, type Address, type PublicClient } from "viem";
 import { classroomAbi } from "../shared/classroom-abi.js";
 import { PAIR, USDC } from "../shared/config.js";
+import { MEMBER_COUNT } from "./model.js";
 
 export const tokenAbi = [
   { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "owner", type: "address" }], outputs: [{ type: "uint256" }] },
@@ -47,7 +48,7 @@ export async function readClassroomSnapshot(client: PublicClient, wire: Address,
     client.readContract({ address: PAIR, abi: pairAbi, functionName: "getReserves", blockNumber }),
     client.getLogs({ address: wire, fromBlock: deployBlock, toBlock: blockNumber }),
   ]);
-  const members = await Promise.all(Array.from({ length: 5 }, (_, i) => readWire("getMember", [i]) as Promise<Member>));
+  const members = await Promise.all(Array.from({ length: MEMBER_COUNT }, (_, i) => readWire("getMember", [i]) as Promise<Member>));
   const readiness = await Promise.all(members.map(async member => {
     if (!member.joined) return { usdc: 0n, eth: 0n, allowance: 0n };
     const [usdc, eth, allowance] = await Promise.all([
