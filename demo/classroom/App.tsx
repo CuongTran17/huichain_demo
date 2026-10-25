@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { createPublicClient, http, type Address } from "viem";
 import { sepolia } from "viem/chains";
-import { parseClassroomConfig } from "./config.js";
+import { parseClassroomConfig, resolveClassroomConfig, wireLink } from "./config.js";
 import { readClassroomSnapshot, type ClassroomSnapshot } from "./chain.js";
 import { approveApplicant, approveRepay, assertWalletContext, connectWallet, sendAction, type Provider } from "./wallet.js";
 import { MEMBER_COUNT, phaseNames, type Action } from "./model.js";
@@ -16,7 +16,9 @@ const raw = { wire: import.meta.env.VITE_WIRE_ADDRESS, deployBlock: import.meta.
   rpcUrl: import.meta.env.VITE_SEPOLIA_RPC_URL };
 let config: ReturnType<typeof parseClassroomConfig> | undefined;
 let configError = "";
-try { config = parseClassroomConfig(raw); } catch (error) { configError = String(error); }
+try { config = resolveClassroomConfig(raw, location.search); } catch (error) { configError = String(error); }
+let defaultConfig: ReturnType<typeof parseClassroomConfig> | undefined;
+try { defaultConfig = parseClassroomConfig(raw); } catch { /* A shared link can work without a default wire. */ }
 
 export function App() {
   const isDisplay = location.pathname === "/display";
@@ -27,6 +29,21 @@ export function App() {
   const [connectError, setConnectError] = useState("");
   const [tx, setTx] = useState<Tx>();
   const [now, setNow] = useState(BigInt(Math.floor(Date.now() / 1000)));
+  const [nextWire, setNextWire] = useState("");
+  const [nextBlock, setNextBlock] = useState("");
+  const [switchError, setSwitchError] = useState("");
+
+  const currentQuery = location.search;
+  const playerLink = `/${currentQuery}`;
+  const displayLink = `/display${currentQuery}`;
+
+  function openWire(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      const selected = resolveClassroomConfig({ rpcUrl: raw.rpcUrl }, `?wire=${encodeURIComponent(nextWire.trim())}&block=${encodeURIComponent(nextBlock.trim())}`);
+      location.assign(wireLink(`${location.origin}/`, selected.wire, selected.deployBlock));
+    } catch (error) { setSwitchError(String(error)); }
+  }
 
   const refresh = useCallback(async () => {
     if (!client || !config) return;
@@ -105,8 +122,8 @@ export function App() {
   return <>
     <a className="skip-link" href="#main">Bỏ qua điều hướng</a>
     <header className="site-header">
-      <a className="brand" href="/" aria-label="Hụi Chain, về trang người chơi"><span className="brand-mark">PTIT</span><span>Hụi Chain <small>SEPOLIA · LỚP HỌC</small></span></a>
-      <nav aria-label="Chế độ xem"><a className={!isDisplay ? "active" : ""} href="/">Người chơi</a><a className={isDisplay ? "active" : ""} href="/display">Bảng chiếu</a></nav>
+      <a className="brand" href={playerLink} aria-label="Hụi Chain, về trang người chơi"><span className="brand-mark">PTIT</span><span>Hụi Chain <small>SEPOLIA · LỚP HỌC</small></span></a>
+      <nav aria-label="Chế độ xem"><a className={!isDisplay ? "active" : ""} href={playerLink}>Người chơi</a><a className={isDisplay ? "active" : ""} href={displayLink}>Bảng chiếu</a></nav>
       {!isDisplay && <WalletNav account={account} pending={tx?.stage === "signing" || tx?.stage === "submitted"} onConnect={() => void connect()} onDisconnect={disconnect} />}
     </header>
     <main id="main" className={isDisplay ? "display-shell" : "page-shell"}>
@@ -120,6 +137,15 @@ export function App() {
           {isDisplay ? <Display snapshot={snapshot} now={now} stale={Boolean(readError)} /> : <Player snapshot={snapshot} account={account} now={now} stale={Boolean(readError)} tx={tx} run={run} admit={admit} approveRepay={repayApproval} connect={connect} />}
         </>}
       </>}
+      {!isDisplay && <section className="card wire-switch"><h2>Mở dây hụi khác</h2>
+        <p>Host triển khai contract RoscaClassroom sáu người mới bằng Remix trên Sepolia, rồi nhập địa chỉ và block của giao dịch triển khai. Web sẽ tạo liên kết riêng để gửi cho cả lớp. Không cần ví host để đổi liên kết.</p>
+        {config && <p className="fine-print">Dây đang xem: <code>{config.wire}</code> · block {config.deployBlock.toString()}. Hãy lưu liên kết hiện tại trước khi chuyển dây để còn rút USDC/ETH đã được phân bổ.</p>}
+        <form className="wire-switch-form" onSubmit={openWire}><label>Địa chỉ contract mới<input required placeholder="0x…" value={nextWire} onChange={event => setNextWire(event.target.value)} /></label>
+          <label>Block triển khai<input required inputMode="numeric" placeholder="Ví dụ 11969004" value={nextBlock} onChange={event => setNextBlock(event.target.value)} /></label>
+          <button className="primary" type="submit">Mở dây mới</button></form>
+        {switchError && <p className="notice error" role="alert">{switchError}</p>}
+        {defaultConfig && currentQuery && <p className="fine-print"><a href="/">Mở lại dây mặc định trên web</a>. Dây cũ khác có thể mở bằng liên kết đã lưu.</p>}
+      </section>}
     </main>
     <footer className="site-footer"><span>Demo testnet PTIT · Không dùng tiền thật · 180% không bảo đảm an toàn tuyệt đối</span><a href="https://sepolia.etherscan.io/" target="_blank" rel="noreferrer">Sepolia Etherscan</a></footer>
   </>;

@@ -2,7 +2,7 @@
 
 Repo độc lập cho sáu người dùng sáu ví thật chơi dây hụi bằng USDC và ETH **testnet**. Host cũng là một người chơi. Frontend tĩnh có tab người chơi và tab bảng chiếu; không có bot, backend hoặc khóa ví trên server.
 
-> Bản `RoscaClassroom` sáu người **chưa triển khai lên Sepolia**. Contract năm người cũ tại `0xa28B310Cc345E693bc468829b08e1f08a50d6c47` là bản lịch sử và không thể nâng cấp tại chỗ. Web đang trỏ địa chỉ cũ phải giữ cấu hình cũ cho tới khi có contract mới và diễn tập xong. Không dùng tiền thật. Tỷ lệ ký quỹ 180% chỉ là tham số demo, không bảo đảm tránh mất gốc.
+> Mỗi dây hụi là một contract riêng trên Sepolia; contract đã kết thúc không thể reset. Contract năm người cũ tại `0xa28B310Cc345E693bc468829b08e1f08a50d6c47` là bản lịch sử, không dùng với frontend sáu người. Không dùng tiền thật. Tỷ lệ ký quỹ 180% chỉ là tham số demo, không bảo đảm tránh mất gốc.
 
 ## Chạy và kiểm thử trên máy
 
@@ -39,12 +39,18 @@ Mở `http://localhost:5173/` cho người chơi và `http://localhost:5173/disp
 
 ## Triển khai contract lên Sepolia
 
-Bản sáu người chưa có địa chỉ triển khai. Có thể tự thực hiện bằng Remix IDE và ví trình duyệt, **không gửi private key cho repo/web**:
+Để tạo một dây sáu người mới, thực hiện bằng Remix IDE và ví host, **không gửi private key cho repo/web**:
 
 1. Chạy `test:contract`, `export:abi`, `check:route` như trên; xác nhận route còn dùng được. Đọc mã nguồn `demo/contracts/RoscaClassroom.sol` và hai thư viện `RoscaMath.sol`, `UniswapV2Route.sol` trước khi ký triển khai.
 2. Tạo workspace Remix, đưa ba tệp Solidity đó vào thư mục `contracts`. Chọn compiler `0.8.28`, bật optimizer 200 runs, cho Remix tải import OpenZeppelin chính thống. Chọn môi trường `Injected Provider` và mạng Sepolia.
 3. Triển khai `RoscaClassroom` với bốn tham số lần lượt: `host_` là ví host của anh, `token` = `0x1c7d4b196cb0c7b01d743fbc6116a902379c7238`, `v2Pair` = `0x72e46e15ef83c896de44b1874b4af7ddab5b4f74`, `v2Router` = `0xee567fe1712faf6149d80da1e6934e354124cfe3`.
 4. Ghi lại **địa chỉ contract mới, tx hash và block number triển khai** từ Etherscan. Đọc lại `host`, `collateralRatioBps = 18000`, `usdc`, `pair`, `router`, `memberCount = 0` và `POT = 600000000` để xác nhận đúng. Chỉ sau đó mới cấu hình web.
+
+### Chơi một dây mới mà không cần redeploy frontend
+
+Trên trang người chơi, tìm mục **Mở dây hụi khác**, nhập địa chỉ contract mới và **block của giao dịch triển khai**, rồi bấm **Mở dây mới**. Web chuyển sang liên kết dạng `/?wire=0x...&block=...`; gửi nguyên liên kết đó cho các bạn. Tab **Bảng chiếu** giữ cùng `wire` và `block`. Không cần đổi biến Vercel hay cấp quyền ví host chỉ để chuyển liên kết.
+
+Lưu liên kết dây cũ trước khi chuyển; người chơi cần mở lại đúng contract cũ để rút USDC/ETH sau quyết toán hoặc thu hồi allowance. Địa chỉ mặc định trong Vercel vẫn mở qua `/`. Nếu muốn một dây khác thành mặc định, khi đó mới sửa `VITE_WIRE_ADDRESS` và `VITE_DEPLOY_BLOCK` rồi redeploy frontend. Web chỉ kiểm tra một số hằng số của contract; host vẫn phải đối chiếu mã nguồn và địa chỉ trên Sepolia trước khi mời người khác ký hoặc approve.
 
 Contract không có nút bùng giả: người chơi bỏ góp và host chuyển bước **sau đúng hạn onchain 5 phút**. Host phải tự bấm chuyển bước, thanh lý và chốt; không có keeper tự động. Dây dừng khi có người không góp, không sinh dây con. Lãi chào vẫn tính theo tối đa năm kỳ quy ước, mỗi kỳ 30 ngày (lượt đầu là 150 ngày), **không** theo 5 phút demo.
 

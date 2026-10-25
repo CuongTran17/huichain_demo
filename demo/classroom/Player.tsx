@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Address } from "viem";
 import type { ClassroomSnapshot } from "./chain.js";
-import { availableActions, claimPreview, FULL_WIRE_ALLOWANCE, GROSS_POT, MEMBER_COUNT, memberIndex, micro, type Action } from "./model.js";
+import { availableActions, claimPreview, FULL_WIRE_ALLOWANCE, GROSS_POT, MEMBER_COUNT, memberIndex, memberReturnSummary, micro, type Action } from "./model.js";
 
 type Props = { snapshot: ClassroomSnapshot; account?: Address; now: bigint; stale: boolean;
   tx?: { stage: string; message: string; hash?: `0x${string}` };
@@ -19,6 +19,7 @@ export function Player({ snapshot, account, now, stale, tx, run, admit, approveR
   const [bid, setBid] = useState(0);
   const id = memberIndex(snapshot, account);
   const member = id >= 0 ? snapshot.members[id] : undefined;
+  const returns = id >= 0 ? memberReturnSummary(snapshot, id) : undefined;
   const host = Boolean(account && account.toLowerCase() === snapshot.host.toLowerCase());
   const actions = stale ? [] : availableActions(snapshot, account, now);
   const pending = tx?.stage === "signing" || tx?.stage === "submitted";
@@ -74,6 +75,13 @@ export function Player({ snapshot, account, now, stale, tx, run, admit, approveR
       <div className="metric-grid"><div><small>Quỹ gộp</small><strong>{micro(GROSS_POT)} USDC</strong></div><div><small>Lãi giữ trong dây</small><strong>{micro(interest)} USDC</strong></div><div><small>Thực nhận</small><strong>{micro(net)} USDC</strong></div><div><small>Nghĩa vụ kỳ sau</small><strong>{micro(debt)} USDC</strong></div><div><small>ETH phải khóa 180%</small><strong>{eth(claimEth)} ETH</strong></div><div><small>Spot pool ước tính</small><strong>≈ {micro(approx)} USDC</strong></div></div>
       <p className="fine-print">Lãi chào được tính theo các kỳ quy ước 30 ngày, dù thời gian mỗi bước demo là 5 phút. Mức ký quỹ 180% là tham số minh họa, không bảo đảm an toàn gốc.</p>
       <p className="fine-print">Giá từ pool Uniswap trên Sepolia tại block {snapshot.blockNumber.toString()}, không phải giá ETH thật. Pool đổi trước khi giao dịch được xác nhận có thể làm claim bị revert; khi đó tải lại báo giá và thử ký lại.</p>
+    </section>}
+    {returns && <section className="card" aria-label="Tiền và ETH của tôi khi kết thúc dây"><div className="section-heading"><span className="section-number">04</span><h2>Tiền của tôi khi kết thúc dây</h2></div>
+      <p>Khoản lãi bid bị khấu trừ ngay khi lĩnh. Lãi nhận thêm đến từ quỹ chung và chỉ xác định khi host chốt; trước đó quỹ đã giữ {micro(snapshot.state.retainedInterest)} USDC nhưng phần của từng người có thể thay đổi.</p>
+      <div className="metric-grid"><div><small>USDC tôi đã góp</small><strong>{micro(returns.totalContributed)} USDC</strong></div><div><small>USDC đã lĩnh ròng</small><strong>{micro(returns.payoutReceived)} USDC</strong></div><div><small>Lãi bid đã khấu trừ</small><strong>{micro(returns.interestPaid)} USDC</strong></div>
+        <div><small>Lãi nhận thêm</small><strong>{returns.interestReceived === undefined ? "Chưa chốt" : `${micro(returns.interestReceived)} USDC`}</strong></div><div><small>USDC được phân bổ sau chốt</small><strong>{returns.usdcEntitlement === undefined ? "Chưa chốt" : `${micro(returns.usdcEntitlement)} USDC`}</strong></div><div><small>USDC còn rút</small><strong>{snapshot.settlementFinalized ? `${micro(returns.usdcAvailable)} USDC` : "Chưa chốt"}</strong></div><div><small>USDC đã rút</small><strong>{micro(returns.usdcWithdrawn)} USDC</strong></div></div>
+      <h3>ETH ký quỹ</h3><div className="metric-grid"><div><small>ETH đã khóa lúc lĩnh</small><strong>{eth(returns.ethInitiallyLocked)} ETH</strong></div><div><small>ETH đã bán khi quyết toán</small><strong>{eth(returns.ethSold)} ETH</strong></div><div><small>ETH còn rút</small><strong>{snapshot.settlementFinalized ? `${eth(returns.ethAvailable)} ETH` : "Chưa chốt"}</strong></div><div><small>ETH đã rút</small><strong>{eth(returns.ethWithdrawn)} ETH</strong></div></div>
+      <p className="fine-print">180% chỉ là tỷ lệ giá trị ETH phải khóa khi lĩnh, không phải khoản thưởng. Nếu dây hoàn thành bình thường, bạn nhận lại lượng ETH đã khóa; nếu ETH bị bán để trả nợ, chỉ phần dư được nhận lại.</p>
     </section>}
     {host && snapshot.state.phase === 0 && <section className="card"><div className="section-heading"><span className="section-number">H</span><h2>Host duyệt sáu ví</h2></div>
       <p>Kiểm tra người học ngoài ứng dụng trước khi duyệt. Một người có thể tạo nhiều ví; contract không biết đó là cùng một người.</p>

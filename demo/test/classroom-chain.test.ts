@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "node:test";
 import type { PublicClient } from "viem";
 import { readClassroomSnapshot } from "../classroom/chain.js";
+import { PAIR, ROUTER, USDC } from "../shared/config.js";
 
 const wire = "0x1111111111111111111111111111111111111111";
 const emptyMember = { account: "0x0000000000000000000000000000000000000000", joined: false,
@@ -28,6 +29,11 @@ it("reads a single block and rejects missing event history instead of inventing 
       if (functionName === "host") return wire;
       if (functionName === "memberCount") return 0;
       if (functionName === "settlementFinalized") return false;
+      if (functionName === "usdc") return USDC;
+      if (functionName === "pair") return PAIR;
+      if (functionName === "router") return ROUTER;
+      if (functionName === "POT") return 600_000_000n;
+      if (functionName === "collateralRatioBps") return 18000;
       if (functionName === "getMember") { memberIds.push(args![0]); return emptyMember; }
       if (functionName === "balanceOf") return 0n;
       if (functionName === "getReserves") return [1n, 1n, 0];
@@ -42,4 +48,7 @@ it("reads a single block and rejects missing event history instead of inventing 
   assert.ok(seen.length > 5 && seen.every(n => n === 42n));
   const broken = { ...client, getLogs: async () => { throw new Error("RPC logs unavailable"); } } as unknown as PublicClient;
   await assert.rejects(readClassroomSnapshot(broken, wire, 10n), /RPC logs unavailable/);
+  const wrongRoute = { ...client, readContract: async (args: { functionName: string }) =>
+    args.functionName === "usdc" ? wire : client.readContract(args as never) } as unknown as PublicClient;
+  await assert.rejects(readClassroomSnapshot(wrongRoute, wire, 10n), /không khớp/i);
 });

@@ -1,5 +1,5 @@
 import type { ClassroomSnapshot } from "./chain.js";
-import { GROSS_POT, MEMBER_COUNT, micro, phaseNames } from "./model.js";
+import { GROSS_POT, MEMBER_COUNT, memberReturnSummary, micro, phaseNames } from "./model.js";
 
 const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
 const eth = (wei: bigint) => (Number(wei) / 1e18).toLocaleString("vi-VN", { maximumFractionDigits: 6 });
@@ -17,6 +17,7 @@ export function Display({ snapshot, now, stale }: { snapshot: ClassroomSnapshot;
   const totalOut = payouts.reduce((a, b) => a + b, 0n);
   const approxEthUsdc = snapshot.reserveWeth > 0n ? snapshot.ethBalance * snapshot.reserveUsdc / snapshot.reserveWeth : 0n;
   const left = snapshot.state.deadline > 0n ? Math.max(0, Number(snapshot.state.deadline - now)) : undefined;
+  const returns = snapshot.members.map((_, id) => memberReturnSummary(snapshot, id));
   return <>
     <section className="display-hero"><div><p className="eyebrow">BẢNG CHIẾU · TRỰC TIẾP TỪ SEPOLIA</p><h1>Dây hụi đang ở <span>{phaseNames[snapshot.state.phase].toLowerCase()}.</span></h1>
       <p>Kỳ {snapshot.state.period + 1} trong {MEMBER_COUNT} · {snapshot.memberCount} trong {MEMBER_COUNT} ví đã được duyệt · Block {snapshot.blockNumber.toString()}</p></div>
@@ -40,13 +41,26 @@ export function Display({ snapshot, now, stale }: { snapshot: ClassroomSnapshot;
         <div className="member-table"><div className="table-header"><span>ID và ví</span><span>Góp kỳ này</span><span>Chào</span><span>Đã lĩnh</span><span>Còn nợ</span></div>
           {snapshot.members.map((m, i) => <div className="table-row" key={i}><span><b>#{i}</b> {m.joined ? short(m.account) : "Chờ duyệt"}</span><span>{m.contributedThisPeriod ? "Đã góp" : "Chưa góp"}</span><span>{m.bidSubmitted ? `${m.annualBps / 100}%` : "—"}</span><span>{m.received ? `Kỳ ${m.payoutPeriod + 1}` : "Chưa"}</span><span>{micro(m.remainingDebt)} USDC</span></div>)}</div>
       </article></section>
-    {(snapshot.state.phase === 4 || snapshot.state.phase === 6) && <section className="card settlement-card"><div className="section-heading"><span className="section-number">03</span><h2>Quyết toán khi dây dừng</h2></div>
+    <section className="card return-card" aria-label="USDC từng người khi kết thúc dây"><div className="section-heading"><span className="section-number">03</span><h2>USDC của từng người</h2></div>
+      <p className="fine-print">Lãi bid đã khấu trừ là số biết chắc. Lãi được chia chỉ chốt sau khi mọi khoản góp và nghĩa vụ được xử lý; quỹ lãi đã giữ hiện là {micro(snapshot.state.retainedInterest)} USDC, không phải số chắc chắn mỗi người sẽ nhận.</p>
+      <div className="return-table-wrap"><table className="return-table"><thead><tr><th>ID</th><th>Đã góp</th><th>Đã lĩnh ròng</th><th>Lãi đã khấu trừ</th><th>Lãi được chia</th><th>USDC được phân bổ</th><th>USDC còn rút</th><th>USDC đã rút</th></tr></thead><tbody>
+        {returns.map((row, id) => <tr key={id}><th scope="row">#{id}</th><td>{micro(row.totalContributed)}</td><td>{micro(row.payoutReceived)}</td><td>{micro(row.interestPaid)}</td><td>{row.interestReceived === undefined ? "Chưa chốt" : micro(row.interestReceived)}</td><td>{row.usdcEntitlement === undefined ? "Chưa chốt" : micro(row.usdcEntitlement)}</td><td>{snapshot.settlementFinalized ? micro(row.usdcAvailable) : "Chưa chốt"}</td><td>{micro(row.usdcWithdrawn)}</td></tr>)}
+      </tbody></table></div>
+      <p className="fine-print">“Đã lĩnh ròng” là tiền nhận ở lượt lĩnh. “USDC được phân bổ” là khoản riêng được quyền rút sau quyết toán, không phải nhận lại 600 USDC lần thứ hai. Số còn rút về 0 sau khi ví đã rút.</p>
+    </section>
+    <section className="card return-card" aria-label="ETH ký quỹ từng người"><div className="section-heading"><span className="section-number">04</span><h2>ETH ký quỹ của từng người</h2></div>
+      <div className="return-table-wrap"><table className="return-table"><thead><tr><th>ID</th><th>ETH khóa lúc lĩnh</th><th>ETH đã bán khi quyết toán</th><th>ETH còn rút</th><th>ETH đã rút</th></tr></thead><tbody>
+        {returns.map((row, id) => <tr key={id}><th scope="row">#{id}</th><td>{eth(row.ethInitiallyLocked)}</td><td>{eth(row.ethSold)}</td><td>{snapshot.settlementFinalized ? eth(row.ethAvailable) : "Chưa chốt"}</td><td>{eth(row.ethWithdrawn)}</td></tr>)}
+      </tbody></table></div>
+      <p className="fine-print">180% là tỷ lệ giá trị ETH yêu cầu khi lĩnh, không phải số ETH được thưởng. Nếu dây hoàn thành bình thường, người đã khóa được rút lại cùng lượng ETH; nếu phải thanh lý, chỉ phần còn dư mới được rút. Người lĩnh cuối không còn nghĩa vụ kỳ sau nên không cần khóa ETH.</p>
+    </section>
+    {(snapshot.state.phase === 4 || snapshot.state.phase === 6) && <section className="card settlement-card"><div className="section-heading"><span className="section-number">05</span><h2>Quyết toán khi dây dừng</h2></div>
       <div className="metric-grid"><div><small>Ví thiếu góp kỳ dừng</small><strong>{snapshot.members.map((_, i) => snapshot.state.triggerMask & (1 << i) ? `ID ${i}` : "").filter(Boolean).join(", ") || "Không có"}</strong></div>
         <div><small>Lãi của người bùng đã dùng</small><strong>{micro(snapshot.state.defaultInterestUsed)} USDC</strong></div><div><small>Lãi chung đã dùng</small><strong>{micro(snapshot.state.commonInterestUsed)} USDC</strong></div><div><small>Lãi đã phân bổ</small><strong>{micro(snapshot.state.distributedInterest)} USDC</strong></div>
         <div><small>Gốc chưa trả đủ</small><strong>{snapshot.settlementFinalized ? `${micro(snapshot.state.principalLoss)} USDC` : "Chưa chốt"}</strong></div><div><small>Nghĩa vụ chưa thu được</small><strong>{micro(snapshot.state.obligationUncollected)} USDC</strong></div></div>
       {!snapshot.settlementFinalized && <p className="fine-print">Chưa chốt quyết toán: số thiếu gốc có thể chưa phản ánh kết quả cuối. Host cần xử lý ETH và bấm chốt.</p>}
     </section>}
-    <section className="card history-card"><div className="section-heading"><span className="section-number">04</span><h2>Giao dịch mới nhất</h2></div>
+    <section className="card history-card"><div className="section-heading"><span className="section-number">06</span><h2>Giao dịch mới nhất</h2></div>
       {snapshot.history.length ? <ol>{snapshot.history.slice(-8).reverse().map((item, i) => <li key={`${item.transactionHash}-${i}`}><span>{eventName[item.event] ?? item.event}</span><span>Block {item.blockNumber.toString()}</span><a href={`https://sepolia.etherscan.io/tx/${item.transactionHash}`} target="_blank" rel="noreferrer">Xem tx ↗</a></li>)}</ol> : <p className="empty-state">Chưa có giao dịch nào của dây trong phạm vi block triển khai.</p>}
     </section>
   </>;

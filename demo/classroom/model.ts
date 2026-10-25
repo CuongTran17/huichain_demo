@@ -1,5 +1,6 @@
 import type { Address } from "viem";
 import type { ClassroomSnapshot } from "./chain.js";
+import { USDC } from "../shared/config.js";
 
 export type Action = "request" | "approve" | "start" | "advance" | "contribute" | "bid" | "claim" | "repay" | "liquidate" | "finalize" | "withdrawUsdc" | "withdrawEth";
 export const MEMBER_COUNT = 6;
@@ -66,4 +67,25 @@ export function claimPreview(period: number, annualBps: number) {
   const debt = BigInt(remaining) * CONTRIBUTION;
   const interest = bidInterest(debt, annualBps, remaining * 30);
   return { debt, interest, net: GROSS_POT - interest };
+}
+
+export function memberReturnSummary(snapshot: ClassroomSnapshot, id: number) {
+  const member = snapshot.members[id];
+  const payout = snapshot.history.find(item => item.event === "PayoutClaimed" && Number(item.args.memberId) === id);
+  const withdrawn = (asset: string) => snapshot.history.filter(item => item.event === "Withdrawn" &&
+    Number(item.args.memberId) === id && String(item.args.asset).toLowerCase() === asset.toLowerCase())
+    .reduce((sum, item) => sum + BigInt(String(item.args.amount)), 0n);
+  return {
+    totalContributed: member.totalContributed,
+    payoutReceived: payout ? BigInt(String(payout.args.net)) : 0n,
+    interestPaid: member.winningInterest,
+    interestReceived: snapshot.settlementFinalized ? member.interestAllocated : undefined,
+    usdcEntitlement: snapshot.settlementFinalized ? member.principalAllocated + member.interestAllocated : undefined,
+    usdcAvailable: member.claimableUsdc,
+    usdcWithdrawn: withdrawn(USDC),
+    ethInitiallyLocked: payout ? BigInt(String(payout.args.ethLocked)) : 0n,
+    ethSold: member.ethSold,
+    ethAvailable: member.claimableEth,
+    ethWithdrawn: withdrawn("0x0000000000000000000000000000000000000000"),
+  };
 }

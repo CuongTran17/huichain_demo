@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import { availableActions, claimPreview } from "../classroom/model.js";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { availableActions, claimPreview, memberReturnSummary } from "../classroom/model.js";
+import { Display } from "../classroom/Display.js";
+import { Player } from "../classroom/Player.js";
 import type { ClassroomSnapshot } from "../classroom/chain.js";
 
 const a = "0x1111111111111111111111111111111111111111";
@@ -65,4 +69,77 @@ it("offers host liquidation for the sixth paid member when they default", () => 
   s.members[5].remainingDebt = 100_000_000n;
   s.members[5].lockedEth = 1n;
   assert.deepEqual(availableActions(s, a, 100n), ["liquidate"]);
+});
+
+it("shows interest paid and separate USDC and ETH entitlements after settlement", () => {
+  const s = snapshot();
+  s.members[0].received = true;
+  s.members[0].winningInterest = 41_095_890n;
+  s.members[0].principalAllocated = 100_000_000n;
+  s.members[0].interestAllocated = 26_000_000n;
+  s.members[0].claimableUsdc = 126_000_000n;
+  s.members[0].claimableEth = 450_000_000_000_000_000n;
+  s.settlementFinalized = true;
+  const result = memberReturnSummary(s, 0);
+  assert.equal(result.interestPaid, 41_095_890n);
+  assert.equal(result.interestReceived, 26_000_000n);
+  assert.equal(result.usdcEntitlement, 126_000_000n);
+  assert.equal(result.usdcAvailable, 126_000_000n);
+  assert.equal(result.ethAvailable, 450_000_000_000_000_000n);
+});
+
+it("does not invent a personal interest forecast before settlement", () => {
+  const s = snapshot();
+  s.members[0].winningInterest = 41_095_890n;
+  s.state.retainedInterest = 41_095_890n;
+  assert.equal(memberReturnSummary(s, 0).interestReceived, undefined);
+});
+
+it("keeps withdrawn assets visible in the history instead of showing them as lost", () => {
+  const s = snapshot();
+  s.settlementFinalized = true;
+  s.members[0].principalAllocated = 100_000_000n;
+  s.members[0].interestAllocated = 26_000_000n;
+  s.history = [
+    { event: "PayoutClaimed", blockNumber: 2n, transactionHash: `0x${"1".repeat(64)}`, args: { memberId: 0, net: 558_904_110n, ethLocked: 450_000_000_000_000_000n } },
+    { event: "Withdrawn", blockNumber: 3n, transactionHash: `0x${"2".repeat(64)}`, args: { memberId: 0, asset: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238", amount: 126_000_000n } },
+    { event: "Withdrawn", blockNumber: 4n, transactionHash: `0x${"3".repeat(64)}`, args: { memberId: 0, asset: "0x0000000000000000000000000000000000000000", amount: 450_000_000_000_000_000n } },
+  ];
+  const result = memberReturnSummary(s, 0);
+  assert.equal(result.payoutReceived, 558_904_110n);
+  assert.equal(result.ethInitiallyLocked, 450_000_000_000_000_000n);
+  assert.equal(result.usdcEntitlement, 126_000_000n);
+  assert.equal(result.usdcWithdrawn, 126_000_000n);
+  assert.equal(result.ethWithdrawn, 450_000_000_000_000_000n);
+  assert.equal(result.usdcAvailable, 0n);
+  assert.equal(result.ethAvailable, 0n);
+});
+
+it("shows each member's USDC and ETH return breakdown on the projector", () => {
+  const s = snapshot();
+  s.settlementFinalized = true;
+  s.state.phase = 6;
+  s.members[0].winningInterest = 41_095_890n;
+  s.members[0].interestAllocated = 26_000_000n;
+  s.members[0].claimableUsdc = 26_000_000n;
+  s.members[0].claimableEth = 450_000_000_000_000_000n;
+  const html = renderToStaticMarkup(createElement(Display, { snapshot: s, now: 100n, stale: false }));
+  assert.match(html, /Lãi đã khấu trừ/);
+  assert.match(html, /Lãi được chia/);
+  assert.match(html, /USDC còn rút/);
+  assert.match(html, /ETH còn rút/);
+});
+
+it("shows the player's own return details without promising interest before finalization", () => {
+  const s = snapshot();
+  s.members[0].winningInterest = 41_095_890n;
+  const render = () => renderToStaticMarkup(createElement(Player, { snapshot: s, account: a, now: 100n,
+    stale: false, run: () => {}, admit: () => {}, approveRepay: () => {}, connect: () => {} }));
+  assert.match(render(), /Lãi nhận thêm/);
+  assert.match(render(), /Chưa chốt/);
+  s.settlementFinalized = true;
+  s.state.phase = 6;
+  s.members[0].interestAllocated = 26_000_000n;
+  s.members[0].claimableUsdc = 26_000_000n;
+  assert.match(render(), /26 USDC/);
 });

@@ -1,6 +1,6 @@
 import { decodeEventLog, type Address, type PublicClient } from "viem";
 import { classroomAbi } from "../shared/classroom-abi.js";
-import { PAIR, USDC } from "../shared/config.js";
+import { PAIR, ROUTER, USDC } from "../shared/config.js";
 import { MEMBER_COUNT } from "./model.js";
 
 export const tokenAbi = [
@@ -38,16 +38,21 @@ export type ClassroomSnapshot = {
 export async function readClassroomSnapshot(client: PublicClient, wire: Address, deployBlock: bigint): Promise<ClassroomSnapshot> {
   const block = await client.getBlock();
   const blockNumber = block.number;
-  const readWire = (functionName: "getState" | "getMember" | "host" | "memberCount" | "settlementFinalized", args?: readonly [number]) =>
+  const readWire = (functionName: "getState" | "getMember" | "host" | "memberCount" | "settlementFinalized" | "usdc" | "pair" | "router" | "POT" | "collateralRatioBps", args?: readonly [number]) =>
     client.readContract({ address: wire, abi: classroomAbi, functionName, args, blockNumber } as never);
-  const [state, host, memberCount, settlementFinalized, usdcBalance, ethBalance, reserves, logs] = await Promise.all([
+  const [state, host, memberCount, settlementFinalized, token, pair, router, pot, ratio, usdcBalance, ethBalance, reserves, logs] = await Promise.all([
     readWire("getState") as Promise<State>, readWire("host") as Promise<Address>, readWire("memberCount") as Promise<number>,
     readWire("settlementFinalized") as Promise<boolean>,
+    readWire("usdc") as Promise<Address>, readWire("pair") as Promise<Address>, readWire("router") as Promise<Address>,
+    readWire("POT") as Promise<bigint>, readWire("collateralRatioBps") as Promise<number>,
     client.readContract({ address: USDC, abi: tokenAbi, functionName: "balanceOf", args: [wire], blockNumber }),
     client.getBalance({ address: wire, blockNumber }),
     client.readContract({ address: PAIR, abi: pairAbi, functionName: "getReserves", blockNumber }),
     client.getLogs({ address: wire, fromBlock: deployBlock, toBlock: blockNumber }),
   ]);
+  if (token.toLowerCase() !== USDC || pair.toLowerCase() !== PAIR || router.toLowerCase() !== ROUTER ||
+    pot !== 600_000_000n || ratio !== 18000 || memberCount > MEMBER_COUNT)
+    throw new Error("Contract dây hụi không khớp cấu hình demo sáu người. Kiểm tra lại địa chỉ Sepolia trước khi ký.");
   const members = await Promise.all(Array.from({ length: MEMBER_COUNT }, (_, i) => readWire("getMember", [i]) as Promise<Member>));
   const readiness = await Promise.all(members.map(async member => {
     if (!member.joined) return { usdc: 0n, eth: 0n, allowance: 0n };

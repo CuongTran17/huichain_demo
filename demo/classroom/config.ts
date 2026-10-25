@@ -13,3 +13,21 @@ export function parseClassroomConfig(raw: { wire?: string; deployBlock?: string;
   if (!raw.rpcUrl || !/^https:\/\//.test(raw.rpcUrl)) throw new Error("Chưa cấu hình RPC Sepolia HTTPS.");
   return { wire: raw.wire as Address, deployBlock: BigInt(raw.deployBlock), rpcUrl: raw.rpcUrl };
 }
+
+export function resolveClassroomConfig(raw: { wire?: string; deployBlock?: string; rpcUrl?: string }, search: string): ClassroomConfig {
+  const query = new URLSearchParams(search);
+  if (!query.has("wire") && !query.has("block")) return parseClassroomConfig(raw);
+  if (!query.has("wire") || !query.has("block")) throw new Error("Liên kết dây hụi cần cả địa chỉ contract và block triển khai.");
+  const wire = query.get("wire") ?? "";
+  const deployBlock = query.get("block") ?? "";
+  assertSixMemberBuildTarget(wire);
+  if (!/^\d+$/.test(deployBlock) || BigInt(deployBlock) === 0n) throw new Error("Block triển khai phải là số nguyên dương.");
+  return parseClassroomConfig({ ...raw, wire, deployBlock });
+}
+
+export function wireLink(baseUrl: string, wire: string, deployBlock: bigint): string {
+  const url = new URL(baseUrl);
+  url.searchParams.set("wire", wire);
+  url.searchParams.set("block", String(deployBlock));
+  return url.toString();
+}

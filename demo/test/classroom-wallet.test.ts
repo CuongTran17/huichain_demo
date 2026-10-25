@@ -3,6 +3,7 @@ import { it } from "node:test";
 import { decodeFunctionData, type PublicClient } from "viem";
 import { assertWalletContext, sendAction } from "../classroom/wallet.js";
 import { tokenAbi, type ClassroomSnapshot } from "../classroom/chain.js";
+import { PAIR, ROUTER, USDC } from "../shared/config.js";
 
 it("refuses signatures after a wallet account or network switch", async () => {
   const account = "0x1111111111111111111111111111111111111111";
@@ -33,6 +34,11 @@ it("sends an exact 600 USDC approval for the six-period wire", async () => {
       if (functionName === "host") return account;
       if (functionName === "memberCount") return 1;
       if (functionName === "settlementFinalized") return false;
+      if (functionName === "usdc") return USDC;
+      if (functionName === "pair") return PAIR;
+      if (functionName === "router") return ROUTER;
+      if (functionName === "POT") return 600_000_000n;
+      if (functionName === "collateralRatioBps") return 18000;
       if (functionName === "getMember") return member;
       if (functionName === "getReserves") return [1n, 1n, 0];
       if (functionName === "balanceOf") return 600_000_000n;
