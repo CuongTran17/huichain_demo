@@ -1,0 +1,74 @@
+[
+  {
+    "day": "2022-05-09",
+    "previous_close": 2519.71,
+    "low": 2225.0,
+    "close": 2228.55,
+    "close_change": -0.11555298030328887,
+    "low_change": -0.11696187259644963,
+    "source": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2022-05.zip"
+  },
+  {
+    "day": "2022-06-13",
+    "previous_close": 1434.84,
+    "low": 1165.45,
+    "close": 1209.82,
+    "close_change": -0.15682584817819412,
+    "low_change": -0.1877491567003986,
+    "source": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2022-06.zip"
+  },
+  {
+    "day": "2022-06-18",
+    "previous_close": 1086.94,
+    "low": 881.56,
+    "close": 995.13,
+    "close_change": -0.08446648389055522,
+    "low_change": -0.1889524720775757,
+    "source": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2022-06.zip"
+  },
+  {
+    "day": "2022-11-09",
+    "previous_close": 1334.77,
+    "low": 1073.53,
+    "close": 1102.73,
+    "close_change": -0.17384268450744322,
+    "low_change": -0.19571911265611308,
+    "source": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2022-11.zip"
+  },
+  {
+    "day": "2024-08-05",
+    "previous_close": 2688.92,
+    "low": 2111.0,
+    "close": 2419.59,
+    "close_change": -0.10016289067729789,
+    "low_change": -0.2149264388676495,
+    "source": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2024-08.zip"
+  },
+  {
+    "day": "2025-04-06",
+    "previous_close": 1806.01,
+    "low": 1537.5,
+    "close": 1580.76,
+    "close_change": -0.12472245447145913,
+    "low_change": -0.1486758102114606,
+    "source": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-04.zip"
+  },
+  {
+    "day": "2025-10-10",
+    "previous_close": 4368.09,
+    "low": 3435.0,
+    "close": 3829.72,
+    "close_change": -0.12325066562273224,
+    "low_change": -0.21361510408439388,
+    "source": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2025-10.zip"
+  },
+  {
+    "day": "2026-02-05",
+    "previous_close": 2148.26,
+    "low": 1818.18,
+    "close": 1826.83,
+    "close_change": -0.14962341616005526,
+    "low_change": -0.15364993064154253,
+    "source": "https://data.binance.vision/data/spot/monthly/klines/ETHUSDT/1d/ETHUSDT-1d-2026-02.zip"
+  }
+]

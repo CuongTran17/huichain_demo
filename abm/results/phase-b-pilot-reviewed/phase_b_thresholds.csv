@@ -1,0 +1,11 @@
+profile,capacity_fraction,status,tested_ratios_pct,min_passing_ratio_pct,adjacent_lower_fails_pct,result_at_180
+all_zero,0.0,pilot,135|140|150|180|185|190,,,FAIL
+all_zero,0.5,pilot,135|140|150|180|185|190,,,FAIL
+all_zero,1.0,pilot,135|140|150|180|185|190,,,FAIL
+all_twenty,0.0,pilot,135|140|150|180|185|190,,,FAIL
+all_twenty,0.5,pilot,135|140|150|180|185|190,,,FAIL
+all_twenty,1.0,pilot,135|140|150|180|185|190,,,FAIL
+mixed_rotating,0.0,pilot,135|140|150|180|185|190,,,FAIL
+mixed_rotating,0.5,pilot,135|140|150|180|185|190,,,FAIL
+mixed_rotating,1.0,pilot,135|140|150|180|185|190,,,FAIL
+all,all,pilot,135|140|150|180|185|190,,,FAIL

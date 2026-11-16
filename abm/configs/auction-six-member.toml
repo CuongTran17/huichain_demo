@@ -1,0 +1,99 @@
+[rosca]
+members = 6
+periods = 6
+contribution = 100.0
+period_days = 30
+reserve_initial = 0.0
+
+[collateral]
+fixed_ratio = 0.5
+alpha_min = 0.4
+alpha_max = 0.7
+liquidation_slippage = 0.0
+
+[behavior]
+reputation_loss = 10000.0
+future_access_loss = 10000.0
+
+[prices]
+source = "stress"
+scenario = "constant"
+
+[experiment]
+runs = 1
+seed = 42
+
+[auction]
+grace_days = 7
+
+[[agents]]
+member_id = 0
+reputation = 0.5
+available_eth = 1000.0
+settlement_mode = "usdc_first"
+usdc_capacity = 500.0
+
+[[agents]]
+member_id = 1
+reputation = 0.5
+available_eth = 1000.0
+settlement_mode = "usdc_first"
+usdc_capacity = 500.0
+
+[[agents]]
+member_id = 2
+reputation = 0.5
+available_eth = 1000.0
+settlement_mode = "usdc_first"
+usdc_capacity = 500.0
+
+[[agents]]
+member_id = 3
+reputation = 0.5
+available_eth = 1000.0
+settlement_mode = "usdc_first"
+usdc_capacity = 500.0
+
+[[agents]]
+member_id = 4
+reputation = 0.5
+available_eth = 1000.0
+settlement_mode = "usdc_first"
+usdc_capacity = 500.0
+
+[[agents]]
+member_id = 5
+reputation = 0.5
+available_eth = 1000.0
+settlement_mode = "usdc_first"
+usdc_capacity = 500.0
+
+[[bids]]
+period = 0
+member_id = 0
+annual_rate = 0.2
+
+[[bids]]
+period = 1
+member_id = 1
+annual_rate = 0.1
+
+[[bids]]
+period = 2
+member_id = 2
+annual_rate = 0.08
+
+[[bids]]
+period = 3
+member_id = 3
+annual_rate = 0.06
+
+[[bids]]
+period = 4
+member_id = 4
+annual_rate = 0.04
+
+[[bids]]
+period = 5
+member_id = 5
+annual_rate = 0.0
