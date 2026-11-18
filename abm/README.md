@@ -8,6 +8,12 @@ Mô hình Mesa này có hai chế độ nghiên cứu tách biệt: ROSCA thứ 
 
 ## Thử dây hụi đấu giá 6 người
 
+### Mở kết quả báo cáo BTL
+
+Sau khi chạy Streamlit theo hướng dẫn bên dưới, ứng dụng mở mục **Kết quả báo cáo BTL**. Mục này đọc các bảng đã lưu trong `results/phase-b-2022-2026-verified/`, `results/phase-b-upper-2022-2026-verified/` và `results/phase-b-crash-15-20/`. Chọn ngày giảm để so sánh giá đóng cửa với giá đáy. Trang báo cáo tự tìm dữ liệu đi kèm repo.
+
+Bấm **Phát lại ca 18/06/2022** để chạy hai lượt trên cùng cấu hình của ca thiếu gốc lớn nhất. Ngày này được chọn vì tại 250%, trong tám ngày đã thử, chỉ phép thử theo giá đáy ngày này ghi nhận mất gốc: 22/825 lượt, so với 0/825 theo giá đóng cửa. Các bảng phát lại cho thấy diễn biến theo kỳ và số tiền từng thành viên được hoàn. Để tự chỉnh giả định, chuyển sang **So sánh kịch bản** hoặc **Quét tự động và tìm ngưỡng**.
+
 ### Xem bộ kết quả nghiên cứu ETH 2022
 
 Chạy Streamlit theo hướng dẫn bên dưới, chọn **Kết quả nghiên cứu 2022** ở đầu trang. Chế độ này đọc checkpoint đã có tại `results/phase-a-2022-annual`; CSV giá chỉ cần khi xem diễn biến. Nếu máy khác chưa có bộ kết quả nghiên cứu, hãy sao chép đúng thư mục nghiên cứu và CSV gốc, không đổi metadata để bỏ qua kiểm tra fingerprint.

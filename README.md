@@ -80,6 +80,8 @@ Thư mục [`abm/`](abm/) chứa mô hình sáu người theo dõi từng thành
 
 Trong bộ thử theo giá đóng cửa, **250%** là mức ký quỹ thấp nhất trên lưới đã thử đạt tiêu chí hoàn đủ gốc, với **0 ca mất gốc trong 839.376 lượt**. Khi dùng giá đáy ngày 18/06/2022, ở cùng mức 250% có **22/825 lượt mất gốc**. Mức **180%** là cấu hình riêng của demo Sepolia.
 
+Dashboard Streamlit mở mặc định ở **Kết quả báo cáo BTL**, với biểu đồ quét ký quỹ, bộ chọn ngày giảm và nút phát lại ca 18/06/2022. Trang chạy local từ thư mục `abm/`.
+
 [Cách chạy ABM và dashboard Streamlit](abm/README.md) · [Kết quả quét ký quỹ](abm/results/phase-b-upper-2022-2026-verified/report.md) · [Kiểm thử theo giá đáy](abm/results/phase-b-crash-15-20/report.md) · [Lịch sử commit ABM](https://github.com/CuongTran17/huichain_demo/commits/abm-history/)
 
 ## Đưa frontend lên Vercel khi có repo GitHub mới

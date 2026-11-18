@@ -13,7 +13,8 @@ APP = Path(__file__).resolve().parents[1] / "src" / "rosca_sim" / "web_app.py"
 
 
 def app():
-    return AppTest.from_file(str(APP), default_timeout=15).run()
+    view = AppTest.from_file(str(APP), default_timeout=15).run()
+    return view.radio(key="view").set_value("So sánh kịch bản").run()
 
 
 def price_csv(tmp_path):

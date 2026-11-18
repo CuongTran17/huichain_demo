@@ -142,6 +142,7 @@ def test_old_source_settings_survive_round_trip_to_new_mode(phase_a_copy):
     from pathlib import Path
     from streamlit.testing.v1 import AppTest
     at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "src/rosca_sim/web_app.py"), default_timeout=30).run()
+    at.radio(key="view").set_value("So sánh kịch bản").run()
     at.text_input(key="csv_path").set_value(str(phase_a_copy[1]))
     at.text_input(key="source_label").set_value("my retained local source")
     at.selectbox(key="quote_asset").set_value("USDT").run()
