@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
-import type { PublicClient } from "viem";
+import { encodeEventTopics, type PublicClient } from "viem";
 import { readClassroomSnapshot } from "../classroom/chain.js";
+import { classroomAbi } from "../shared/classroom-abi.js";
 import { PAIR, ROUTER, USDC } from "../shared/config.js";
 
 const wire = "0x1111111111111111111111111111111111111111";
@@ -51,4 +52,30 @@ it("reads a single block and rejects missing event history instead of inventing 
   const wrongRoute = { ...client, readContract: async (args: { functionName: string }) =>
     args.functionName === "usdc" ? wire : client.readContract(args as never) } as unknown as PublicClient;
   await assert.rejects(readClassroomSnapshot(wrongRoute, wire, 10n), /không khớp/i);
+
+  const head = 100_010n;
+  const applicant = "0x2222222222222222222222222222222222222222";
+  const eventBlocks = [10n, 50_009n, 50_010n, 100_009n, head];
+  const ranged = {
+    ...client,
+    getBlock: async () => ({ number: head, timestamp: 100n }),
+    getLogs: async ({ address, fromBlock, toBlock }: { address: string; fromBlock: bigint; toBlock: bigint }) => {
+      assert.equal(address, wire);
+      assert.ok(toBlock >= fromBlock && toBlock - fromBlock < 50_000n, "RPC limit is 50,000 blocks");
+      assert.ok(fromBlock >= 10n && toBlock <= head);
+      return eventBlocks.filter(n => n >= fromBlock && n <= toBlock).map(blockNumber => ({
+        blockNumber, transactionHash: "0x01", data: "0x",
+        topics: encodeEventTopics({ abi: classroomAbi, eventName: "JoinRequested", args: { account: applicant } }),
+      }));
+    },
+  } as unknown as PublicClient;
+  const paged = await readClassroomSnapshot(ranged, wire, 10n);
+  assert.deepEqual(paged.history.map(item => item.blockNumber), eventBlocks);
+  assert.deepEqual(paged.applicants, [applicant]);
+
+  const missingPage = { ...ranged, getLogs: async (args: { fromBlock: bigint }) => {
+    if (args.fromBlock > 10n) throw new Error("RPC page unavailable");
+    return ranged.getLogs(args);
+  } } as unknown as PublicClient;
+  await assert.rejects(readClassroomSnapshot(missingPage, wire, 10n), /RPC page unavailable/);
 });

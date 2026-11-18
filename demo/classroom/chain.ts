@@ -35,6 +35,21 @@ export type ClassroomSnapshot = {
   readiness: { usdc: bigint; eth: bigint; allowance: bigint }[]; wire: Address;
 };
 
+const LOG_PAGE_SIZE = 50_000n; // PublicNode counts both endpoints of an eth_getLogs range.
+
+async function readClassroomLogs(client: PublicClient, wire: Address, deployBlock: bigint, blockNumber: bigint) {
+  if (deployBlock > blockNumber) throw new Error("Block triển khai nằm sau block Sepolia mới nhất.");
+
+  const logs = [];
+  for (let fromBlock = deployBlock; fromBlock <= blockNumber; fromBlock += LOG_PAGE_SIZE) {
+    const pageEnd = fromBlock + LOG_PAGE_SIZE - 1n;
+    const toBlock = pageEnd < blockNumber ? pageEnd : blockNumber;
+    const page = await client.getLogs({ address: wire, fromBlock, toBlock });
+    for (const log of page) logs.push(log);
+  }
+  return logs;
+}
+
 export async function readClassroomSnapshot(client: PublicClient, wire: Address, deployBlock: bigint): Promise<ClassroomSnapshot> {
   const block = await client.getBlock();
   const blockNumber = block.number;
@@ -48,7 +63,7 @@ export async function readClassroomSnapshot(client: PublicClient, wire: Address,
     client.readContract({ address: USDC, abi: tokenAbi, functionName: "balanceOf", args: [wire], blockNumber }),
     client.getBalance({ address: wire, blockNumber }),
     client.readContract({ address: PAIR, abi: pairAbi, functionName: "getReserves", blockNumber }),
-    client.getLogs({ address: wire, fromBlock: deployBlock, toBlock: blockNumber }),
+    readClassroomLogs(client, wire, deployBlock, blockNumber),
   ]);
   if (token.toLowerCase() !== USDC || pair.toLowerCase() !== PAIR || router.toLowerCase() !== ROUTER ||
     pot !== 600_000_000n || ratio !== 18000 || memberCount > MEMBER_COUNT)
