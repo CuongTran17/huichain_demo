@@ -1,8 +1,28 @@
 # Hụi Chain lớp học · Sepolia
 
-Repo độc lập cho sáu người dùng sáu ví thật chơi dây hụi bằng USDC và ETH **testnet**. Host cũng là một người chơi. Frontend tĩnh có tab người chơi và tab bảng chiếu; không có bot, backend hoặc khóa ví trên server.
+Bản demo lớp học cho sáu người dùng sáu ví chơi dây hụi bằng USDC và ETH **testnet**. Host cũng là một người chơi. Frontend tĩnh có tab người chơi và tab bảng chiếu; không có bot, backend hoặc khóa ví trên server.
 
 > Mỗi dây hụi là một contract riêng trên Sepolia; contract đã kết thúc không thể reset. Contract năm người cũ tại `0xa28B310Cc345E693bc468829b08e1f08a50d6c47` là bản lịch sử, không dùng với frontend sáu người. Không dùng tiền thật. Tỷ lệ ký quỹ 180% chỉ là tham số demo, không bảo đảm tránh mất gốc.
+
+## Kiến trúc và luồng demo
+
+### Kiến trúc mã nguồn
+
+Frontend trong `demo/classroom/` chạy trên Vercel. `App.tsx` điều phối trang người chơi và bảng chiếu, `chain.ts` đọc dữ liệu từ Sepolia, còn `wallet.ts` chuẩn bị giao dịch để MetaMask ký. `RoscaClassroom.sol` là hợp đồng điều phối dây, giữ tài sản và quyết toán. Hai thư viện Solidity xử lý phép tính và kết nối pool Uniswap V2.
+
+![Kiến trúc mã nguồn bản demo](docs/diagrams/demo-kien-truc.png)
+
+### Hoàn thành đủ sáu kỳ
+
+Mỗi kỳ, sáu ví góp 100 USDC mỗi ví. Người chưa lĩnh chào lãi, ứng viên thắng ký lĩnh và gửi ETH ký quỹ. Sau kỳ 6, host chốt phân bổ và từng thành viên ký rút tài sản. Có thể xem lại dây đã hoàn thành đủ sáu kỳ, được triển khai ở block `11969004`. [Bảng chiếu của dây đã hoàn thành](https://huichain-demo.vercel.app/display?wire=0x6e8751Ca3b0a9Dc8F6A2E3139A57C3DE65290C6A&block=11969004) · [Giao dịch chốt trên Sepolia Etherscan](https://sepolia.etherscan.io/tx/0xb1098e66e2a83771131641a2013f71f67d23259782a3b1bec9e18901b70d61fd)
+
+![Luồng giao dịch khi đủ sáu kỳ](docs/diagrams/demo-hoan-thanh-sau-ky.png)
+
+### Bỏ góp và quyết toán
+
+Nếu có người thiếu góp khi hết hạn, host chuyển dây sang quyết toán. Người đã lĩnh còn tuân thủ có thể nộp USDC trước hạn. Host có thể thanh lý ETH đủ điều kiện qua router Uniswap V2, rồi chốt phân bổ. Hợp đồng ưu tiên hoàn gốc cho người chưa lĩnh.
+
+![Luồng xử lý thiếu góp và quyết toán](docs/diagrams/demo-bo-gop-va-quyet-toan.png)
 
 ## Chạy và kiểm thử trên máy
 
@@ -54,9 +74,13 @@ Lưu liên kết dây cũ trước khi chuyển; người chơi cần mở lại
 
 Contract không có nút bùng giả: người chơi bỏ góp và host chuyển bước **sau đúng hạn onchain 5 phút**. Host phải tự bấm chuyển bước, thanh lý và chốt; không có keeper tự động. Dây dừng khi có người không góp, không sinh dây con. Lãi chào vẫn tính theo tối đa năm kỳ quy ước, mỗi kỳ 30 ngày (lượt đầu là 150 ngày), **không** theo 5 phút demo.
 
-## ABM và demo không đo cùng một thứ
+## Mô phỏng ABM
 
-ABM sáu người dùng các cửa sổ giá ETH lịch sử và kỳ góp 30 ngày để **nghiên cứu** ngưỡng rủi ro. Demo này dùng ví thật và USDC/ETH thử nghiệm trên Sepolia; ETH ký quỹ được định giá theo reserve của cặp Uniswap V2-compatible USDC/WETH ở địa chỉ `0x72e46e15ef83c896de44b1874b4af7ddab5b4f74`, thanh lý qua router `0xee567fe1712faf6149d80da1e6934e354124cfe3`. Giá pool testnet, phí, tác động giá, làm tròn và thời điểm ký có thể khác giả định ABM. Vì vậy kết quả ABM không chứng minh 180% sẽ an toàn khi chạy demo hoặc dùng tiền thật.
+Thư mục [`abm/`](abm/) chứa mô hình sáu người theo dõi từng thành viên qua các kỳ góp, chào lãi, lĩnh, bỏ góp và quyết toán. Mô phỏng dùng kỳ 30 ngày và cửa sổ giá ETH lịch sử để đo số USDC gốc được hoàn khi dây dừng.
+
+Trong bộ thử theo giá đóng cửa, **250%** là mức ký quỹ thấp nhất trên lưới đã thử đạt tiêu chí hoàn đủ gốc, với **0 ca mất gốc trong 839.376 lượt**. Khi dùng giá đáy ngày 18/06/2022, ở cùng mức 250% có **22/825 lượt mất gốc**. Mức **180%** là cấu hình riêng của demo Sepolia.
+
+[Cách chạy ABM và dashboard Streamlit](abm/README.md) · [Kết quả quét ký quỹ](abm/results/phase-b-upper-2022-2026-verified/report.md) · [Kiểm thử theo giá đáy](abm/results/phase-b-crash-15-20/report.md) · [Lịch sử commit ABM](https://github.com/CuongTran17/huichain_demo/commits/abm-history/)
 
 ## Đưa frontend lên Vercel khi có repo GitHub mới
 
